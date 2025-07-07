@@ -1,0 +1,12 @@
+PyPDF2
+pandas
+openpyxl
+Pillow
+pytesseract
+pdf2image
+watchdog
+pydantic
+pydantic-settings
+python-dotenv
+click
+PyYAML

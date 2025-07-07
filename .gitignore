@@ -1,0 +1,6 @@
+__pycache__/
+venv/
+logs/
+output_reports/
+test_output/
+invoices.db
