@@ -5,6 +5,10 @@ from PIL import Image
 import pytesseract
 from pdf2image import convert_from_path
 import yaml
+from multiprocessing import Process, Queue
+from queue import Empty
+
+from utils import FileSystemUtils # Import FileSystemUtils
 
 with open('patterns.yml', 'r') as f:
     patterns = yaml.safe_load(f)
@@ -22,6 +26,18 @@ class TextExtractor:
         self.enable_ocr = enable_ocr
         if self.enable_ocr:
             pytesseract.pytesseract.tesseract_cmd = settings.tesseract_cmd
+
+    def _ocr_process(self, pdf_path: str, q: Queue):
+        text = ""
+        try:
+            images = convert_from_path(pdf_path)
+            for i, image in enumerate(images):
+                # Pre-process image before passing to Tesseract
+                processed_image = FileSystemUtils.preprocess_image(image)
+                text += pytesseract.image_to_string(processed_image)
+            q.put(text)
+        except Exception as e:
+            q.put(f"OCR_ERROR: {e}")
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """Extracts text from a PDF file. Tries direct extraction first, then falls back to OCR if enabled.
@@ -52,16 +68,26 @@ class TextExtractor:
         
         if self.enable_ocr:
             logging.info(f"Attempting OCR for {pdf_path}...")
+            q = Queue()
+            p = Process(target=self._ocr_process, args=(pdf_path, q))
+            p.start()
             try:
-                images = convert_from_path(pdf_path)
-                for i, image in enumerate(images):
-                    text += pytesseract.image_to_string(image)
+                # Wait for 180 seconds for OCR to complete
+                text = q.get(timeout=180)
                 if text.strip():
                     return text
                 else:
                     raise TextExtractionError(f"OCR extracted no text from {pdf_path}.")
+            except Empty:
+                p.terminate()
+                p.join()
+                raise OCRProcessingError(f"OCR process timed out for {pdf_path}.")
             except Exception as e:
+                p.terminate()
+                p.join()
                 raise OCRProcessingError(f"OCR failed for {pdf_path}: {e}")
+            finally:
+                p.join() # Ensure the process is cleaned up
         
         raise TextExtractionError(f"Could not extract text from {pdf_path}.")
 
@@ -107,16 +133,19 @@ class InvoiceParser:
         Raises:
             UnsupportedInvoiceFormatError: If the document type cannot be determined.
         """
-        if re.search(r"Patent and Trademark Institute", text, re.IGNORECASE):
-            return "patent_and_trademark_institute"
-        if re.search(r"Vukov Development Services", text, re.IGNORECASE):
-            return "vukov_development_services"
-        if re.search(r"ЕтКюСи ЕООД", text, re.IGNORECASE):
-            return "etkyusi_eood"
-        if re.search(r"R\s*e\s*p\s*l\s*i\s*t", text, re.IGNORECASE):
-            return "replit"
-        if re.search(r"AtQC Ltd", text, re.IGNORECASE):
-            return "atqc_ltd"
+        # Prioritize receipt detection
+        if "receipt" in self.patterns:
+            for keyword in self.patterns["receipt"].get("keywords", []):
+                if re.search(keyword, text, re.IGNORECASE):
+                    return "receipt"
+
+        for doc_type, patterns in self.patterns.items():
+            if doc_type == "receipt": # Skip receipt as it's handled above
+                continue
+            if "keywords" in patterns:
+                for keyword in patterns["keywords"]:
+                    if re.search(keyword, text, re.IGNORECASE):
+                        return doc_type
         raise UnsupportedInvoiceFormatError("Could not determine document type.")
 
     def parse_line_items(self, text: str, doc_type: str) -> list:
@@ -158,8 +187,12 @@ class InvoiceParser:
                     amount_str = amount_match.group(1)
                     amount = self.normalize_amount(amount_str)
                     description = line[:amount_match.start()].strip()
-                
-                description = re.sub(r'^\d+\s*\.?\s*|^[a-zA-Z]\s*\.?\s*|\[\d+\]\s*|\[[a-zA-Z]\]\s*|\b(?:Quantity|Qty|Unit|Price|Amount|Total|UR Currency:|nit Price Quantity Unit|otal:|Subtotal|VAT|Grand Total|Сума за плащане|Междинна сума)\b\s*\d*\.?\d*\s*', '', description, flags=re.IGNORECASE).strip()
+
+                if doc_type == "receipt":
+                    # For receipts, the description might be the whole line before the amount
+                    description = re.sub(r'^[\d]+\s*\.?\s*|^[a-zA-Z]\s*\.?\s*|\[\d+\]\s*|\[[a-zA-Z]\]\s*|\b(?:Quantity|Qty|Unit|Price|Amount|Total|UR Currency:|nit Price Quantity Unit|otal:|Subtotal|VAT|Grand Total|Сума за плащане|Междинна сума)\b\s*\d*\.?\d*\s*', '', description, flags=re.IGNORECASE).strip()
+                else:
+                    description = re.sub(r'^[\d]+\s*\.?\s*|^[a-zA-Z]\s*\.?\s*|\[\d+\]\s*|\[[a-zA-Z]\]\s*|\b(?:Quantity|Qty|Unit|Price|Amount|Total|UR Currency:|nit Price Quantity Unit|otal:|Subtotal|VAT|Grand Total|Сума за плащане|Междинна сума)\b\s*\d*\.?\d*\s*', '', description, flags=re.IGNORECASE).strip()
 
                 if description or amount is not None:
                     items.append({"description": description, "amount": amount})
@@ -208,10 +241,55 @@ class InvoiceParser:
         logging.info(f"Using patterns: {layout_patterns}")
 
         invoice_number_match = re.search(layout_patterns["invoice_number"], text, re.IGNORECASE | re.UNICODE)
-        date_match = re.search(layout_patterns["date"], text, re.IGNORECASE | re.UNICODE)
-        total_match = re.search(layout_patterns["total"], text, re.IGNORECASE | re.UNICODE)
-        vat_match = re.search(layout_patterns["vat"], text, re.IGNORECASE | re.UNICODE)
         
+        # Initialize date_match and total_match to None
+        date_match = None
+        total_match = None
+
+        # Handle date extraction for receipts first
+        if doc_type == "receipt" and "date" in layout_patterns:
+            receipt_date_match = re.search(layout_patterns["date"], text, re.IGNORECASE | re.UNICODE)
+            if receipt_date_match:
+                data["date"] = receipt_date_match.group(1).strip().replace(' ', '')
+                logging.info(f"Found date (receipt): {data['date']}")
+            else:
+                logging.warning("Date not found for receipt.")
+        
+        # Fallback to general date extraction if not a receipt or receipt date wasn't found
+        if data["date"] == "Not found": # Only try general if receipt date wasn't found
+            date_match = re.search(layout_patterns["date"], text, re.IGNORECASE | re.UNICODE)
+
+        # Handle total extraction for receipts first
+        if doc_type == "receipt" and "total" in layout_patterns:
+            receipt_total_match = re.search(layout_patterns["total"], text, re.IGNORECASE | re.UNICODE)
+            if receipt_total_match:
+                data["total"] = self.normalize_amount(receipt_total_match.group(1).strip())
+                logging.info(f"Found total (receipt): {data['total']}")
+            else:
+                logging.warning("Total not found for receipt.")
+        
+        # Fallback to general total extraction if not a receipt or receipt total wasn't found
+        if data["total"] == "Not found": # Only try general if receipt total wasn't found
+            total_match = re.search(layout_patterns["total"], text, re.IGNORECASE | re.UNICODE)
+
+        # Handle VAT extraction for receipts first
+        if doc_type == "receipt" and "vat" in layout_patterns:
+            receipt_vat_match = re.search(layout_patterns["vat"], text, re.IGNORECASE | re.UNICODE)
+            if receipt_vat_match:
+                vat_value = receipt_vat_match.group(1)
+                if vat_value:
+                    data["vat"] = self.normalize_amount(vat_value.strip())
+                    logging.info(f"Found VAT (receipt): {data['vat']}")
+                else:
+                    data["vat"] = 0.0
+                    logging.info("VAT found for receipt but value is empty, setting to 0.0")
+            else:
+                logging.warning("VAT not found for receipt.")
+
+        # Fallback to general VAT extraction if not a receipt or receipt VAT wasn't found
+        if data["vat"] == "Not found": # Only try general if receipt VAT wasn't found
+            vat_match = re.search(layout_patterns["vat"], text, re.IGNORECASE | re.UNICODE)
+
         client_match = None
         if "client" in layout_patterns:
             client_match = re.search(layout_patterns["client"], text, re.IGNORECASE | re.UNICODE | re.DOTALL)
@@ -260,6 +338,13 @@ class InvoiceParser:
         if client_match:
             data["client"] = client_match.group(1).strip().replace('\n', ' ')
             logging.info(f"Found client: {data['client']}")
+        elif doc_type == "receipt" and "merchant_name" in layout_patterns:
+            merchant_name_match = re.search(layout_patterns["merchant_name"], text, re.IGNORECASE | re.UNICODE | re.DOTALL)
+            if merchant_name_match:
+                data["client"] = merchant_name_match.group(1).strip().replace('\n', ' ')
+                logging.info(f"Found merchant name (receipt): {data['client']}")
+            else:
+                logging.warning("Merchant name not found for receipt.")
         else:
             logging.warning("Client not found.")
 

@@ -1,5 +1,7 @@
 patent_and_trademark_institute:
   document_type: patent_invoice
+  keywords:
+    - "Patent and Trademark Institute"
   invoice_number: '(\d+)\s*Invoice No:|Invoice No:\s*(\d+)'
   date: 'Date:\s*(\d{2}\.\d{2}\.\d{4})'
   total: 'Total:\s*(?:[A-Z$€£]{1,3}\s*)?([\d.,]+)(?!\s*Subtotal)'
@@ -8,6 +10,9 @@ patent_and_trademark_institute:
   line_items: 'Description\s*Amount\s*(.*?)(?:Subtotal|Total)'
 vukov_development_services:
   document_type: vukov_invoice
+  keywords:
+    - "Vukov Development Services"
+    - "Вуков Дивелъпмънт Сървисис ЕООД"
   invoice_number: '(\d+)\s*Invoice No:'
   date: 'Date:\s*(\d{2}\.\d{2}\.\d{4})'
   total: 'Total:\s*([\d.,]+)'
@@ -16,6 +21,8 @@ vukov_development_services:
   line_items: 'Description\s*Amount\s*(.*?)(?:Subtotal|Total)'
 etkyusi_eood:
   document_type: etkyusi_invoice
+  keywords:
+    - "ЕтКюСи ЕООД"
   invoice_number: 'Фактура\s*No:(\d+)'
   date: 'Дата на издаване:\s*(\d{2}\.\d{2}\.\d{4})'
   total: 'Сума за плащане:\s*([\d.,]+)'
@@ -24,6 +31,8 @@ etkyusi_eood:
   line_items: 'Description\s*Amount\s*(.*?)(?:Междинна сума|Сума за плащане)'
 replit:
   document_type: replit_invoice
+  keywords:
+    - "Replit"
   invoice_number: 'Invoice\s*number\s*([A-Z0-9\s\.\-]+)'
   date: 'Date\s*of\s*issue\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})'
   total: '\$([\d\s.,]+)\s*U\s*S\s*D'
@@ -32,9 +41,22 @@ replit:
   line_items: 'Description\s*Amount\s*(.*?)(?:Subtotal|Total)'
 atqc_ltd:
   document_type: atqc_invoice
+  keywords:
+    - "AtQC Ltd"
   invoice_number: 'No:(\d+)'
   date: 'Date of issue:\s*(\d{2}\.\d{2}\.\d{4})'
   total: 'Due Amount:\s*([\d.,]+)\s*([A-Z]{3})'
   vat: 'VAT\(0%\):\s*([\d.,]+)'
   client: 'Recipient\nCompany Name:([A-Za-z\s.,-]+)'
   line_items: 'Description\s*Amount\s*(.*?)(?:Subtotal|Total)'
+receipt:
+  document_type: receipt
+  keywords:
+    - "receipt"
+    - "cash memo"
+    - "sales slip"
+    - "thank you"
+  merchant_name: '^(.*?)\n'
+  date: '(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})'
+  total: '(?:Total|Amount Due|Grand Total|Balance Due)[:\s]*([\d.,]+)'
+  line_items: '(.+?)\s+([\d.,]+)'

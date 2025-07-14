@@ -15,8 +15,12 @@ class Validator:
         """
         errors = []
         
-        # Validate required fields
-        required_fields = ["invoice_number", "date", "total"]
+        # Determine required fields based on document type
+        if data.get("doc_type") == "receipt":
+            required_fields = ["date", "total"]
+        else:
+            required_fields = ["invoice_number", "date", "total"]
+
         for field in required_fields:
             if data.get(field) == "Not found" or data.get(field) is None:
                 errors.append(f"Missing required field: {field}")

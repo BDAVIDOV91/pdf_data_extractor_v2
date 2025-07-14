@@ -4,3 +4,5 @@ logs/
 output_reports/
 test_output/
 invoices.db
+GEMINI.md
+input_pdfs/
