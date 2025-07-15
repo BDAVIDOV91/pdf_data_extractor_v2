@@ -69,7 +69,13 @@ def cli():
     "--watch", is_flag=True, help="Enable continuous folder watching for new PDFs."
 )
 @click.option("--db", is_flag=True, help="Enable storing results in the database.")
-def run(watch: bool, db: bool) -> None:
+@click.option(
+    "--max-workers",
+    type=int,
+    default=None,
+    help="Maximum number of parallel processes. Defaults to the number of CPU cores.",
+)
+def run(watch: bool, db: bool, max_workers: int | None) -> None:
     """Main function to run the PDF data extractor and reporter."""
     logging.info("PDF Data Extractor started.")
 
@@ -104,7 +110,7 @@ def run(watch: bool, db: bool) -> None:
         ]
         processed_files = len(pdf_files)
 
-        with ProcessPoolExecutor() as executor:
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
             future_to_pdf = {
                 executor.submit(process_pdf, pdf_file): pdf_file
                 for pdf_file in pdf_files

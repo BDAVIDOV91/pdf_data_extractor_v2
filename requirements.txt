@@ -11,3 +11,4 @@ python-dotenv
 click
 PyYAML
 opencv-python
+pytest

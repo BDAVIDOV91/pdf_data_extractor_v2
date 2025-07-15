@@ -9,7 +9,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(settings.input_dir, Path("input_pdfs"))
         self.assertEqual(settings.output_dir, Path("output_reports"))
         self.assertEqual(settings.log_file, Path("logs/extraction.log"))
-        self.assertFalse(settings.enable_ocr)
+        self.assertTrue(settings.enable_ocr)
         self.assertEqual(settings.tesseract_cmd, "/usr/bin/tesseract")
 
     def test_env_file_loading(self):

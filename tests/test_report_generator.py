@@ -9,16 +9,19 @@ class TestReportGenerator(unittest.TestCase):
         self.output_dir = "test_output"
         self.report_generator = ReportGenerator(self.output_dir)
         self.sample_data = {
-            "invoice_number": "12345",
-            "date": "2025-07-05",
-            "client": "Test Client",
-            "total": 100.00,
-            "vat": 20.00,
-            "currency": "USD",
-            "line_items": [
-                {"description": "Item 1", "amount": 50.00},
-                {"description": "Item 2", "amount": 50.00}
-            ]
+            "data": {
+                "invoice_number": "12345",
+                "date": "2025-07-05",
+                "client": "Test Client",
+                "total": 100.00,
+                "vat": 20.00,
+                "currency": "USD",
+                "line_items": [
+                    {"description": "Item 1", "amount": 50.00},
+                    {"description": "Item 2", "amount": 50.00}
+                ]
+            },
+            "validation_errors": []
         }
 
     @patch("builtins.open", new_callable=mock_open)
