@@ -62,8 +62,7 @@ class ReportGenerator:
                 "client": invoice_data.get('client'),
                 "total": invoice_data.get('total'),
                 "vat": invoice_data.get('vat'),
-                "currency": invoice_data.get('currency'),
-                "validation_errors": ", ".join(errors)
+                "currency": invoice_data.get('currency')
             }
             processed_data.append(processed_row)
 
