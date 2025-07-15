@@ -152,12 +152,28 @@ class InvoiceParser:
         Raises:
             UnsupportedInvoiceFormatError: If the document type cannot be determined.
         """
-        # Iterate through document types in the order they appear in patterns.yml
+        # Calculate scores for each document type based on keyword matches
+        scores = {}
         for doc_type, patterns in self.patterns.items():
             if "keywords" in patterns:
+                score = 0
                 for keyword in patterns["keywords"]:
                     if re.search(keyword, text, re.IGNORECASE):
-                        return doc_type
+                        score += 1
+                if score > 0:
+                    scores[doc_type] = score
+
+        # Sort document types by score (descending) and then by number of keywords (descending)
+        # This prioritizes more specific matches and then longer keyword lists
+        sorted_doc_types = sorted(
+            scores.items(),
+            key=lambda item: (item[1], len(self.patterns[item[0]].get("keywords", []))),
+            reverse=True,
+        )
+
+        if sorted_doc_types:
+            # Return the document type with the highest score
+            return sorted_doc_types[0][0]
         
         # Fallback mechanism: if no specific document type is identified, return "document"
         return "document"
@@ -182,10 +198,15 @@ class InvoiceParser:
             return items
 
         line_items_pattern = layout_patterns["line_items"]
+        logging.info(f"Attempting to find line items with pattern: {line_items_pattern}")
 
         # Use finditer to get all matches with named groups
+        found_matches = False
         for match in re.finditer(line_items_pattern, text, re.IGNORECASE | re.DOTALL | re.UNICODE):
+            found_matches = True
+            logging.info(f"Found potential line item match: {match.group(0)}")
             item_data = match.groupdict()
+            logging.info(f"Extracted item data from match: {item_data}")
             quantity = item_data.get("quantity")
             description = item_data.get("description", "").strip()
             amount_str = item_data.get("amount")
@@ -200,11 +221,11 @@ class InvoiceParser:
                     f"Parsed line item: Description='{description}', Amount={amount}, Quantity={quantity}"
                 )
             else:
-                logging.warning(f"Could not parse line item from match: {match.group(0)}")
+                logging.warning(f"Could not parse line item from match: {match.group(0)}. Description or amount is missing.")
 
-        if not items: # If no items were found after iterating through all matches
+        if not found_matches: # If no items were found after iterating through all matches
             logging.warning(
-                f"No line items found for document type: {doc_type}. Text block: {text[:500]}..."
+                f"No line items found for document type: {doc_type} using pattern: {line_items_pattern}. Text block: {text[:500]}..."
             )
 
         return items
@@ -266,16 +287,18 @@ class InvoiceParser:
 
         for field in fields_to_extract:
             if field in layout_patterns:
+                pattern = layout_patterns[field]
+                logging.info(f"Attempting to find '{field}' with pattern: {pattern}")
                 match = re.search(
-                    layout_patterns[field],
+                    pattern,
                     text,
                     re.IGNORECASE
                     | re.UNICODE
                     | (re.DOTALL if field == "client" else 0),
                 )
                 if match:
-                    logging.debug(f"DEBUG: Field: {field}, Match: {match}")
                     extracted_value = match.group(1).strip()
+                    logging.info(f"SUCCESS: Found raw value for '{field}': '{extracted_value}'")
                     if field in ["total", "vat"]:
                         data[field] = self.normalize_amount(extracted_value)
                         if field == "vat" and data[field] is None:
@@ -288,11 +311,9 @@ class InvoiceParser:
                             if field == "client"
                             else extracted_value.replace(" ", "")
                         )
-                    logging.info(f"Found {field}: {data[field]}")
+                    logging.info(f"Stored value for '{field}': {data[field]}")
                 else:
-                    logging.warning(
-                        f"{field.replace('_', ' ').capitalize()} not found."
-                    )
+                    logging.warning(f"'{field.replace('_', ' ').capitalize()}' not found with pattern: {pattern}")
 
         # Extract transaction_id for receipts
         if doc_type == "receipt" and "transaction_id" in layout_patterns:
