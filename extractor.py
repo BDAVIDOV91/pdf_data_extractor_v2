@@ -86,8 +86,8 @@ class TextExtractor:
             p = Process(target=self._ocr_process, args=(pdf_path, q))
             p.start()
             try:
-                # Wait for 180 seconds for OCR to complete
-                text = q.get(timeout=180)
+                # Wait for 300 seconds for OCR to complete
+                text = q.get(timeout=300)
                 if text.strip():
                     return text
                 else:
