@@ -6,3 +6,6 @@ test_output/
 invoices.db
 GEMINI.md
 input_pdfs/
+docs/
+DATABASE_URL
+.env

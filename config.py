@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     log_file: Path = Field("logs/extraction.log", description="Path to the log file.")
     enable_ocr: bool = Field(True, description="Enable OCR for scanned PDFs.")
     tesseract_cmd: str = Field("/usr/bin/tesseract", description="Path to the Tesseract executable.")
-    database_path: Path = Field("invoices.db", description="Path to the SQLite database file.")
+    database_url: str = Field(..., description="URL for the PostgreSQL database.")
 
     class Config:
         env_file = ".env"

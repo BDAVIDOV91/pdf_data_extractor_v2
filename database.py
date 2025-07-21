@@ -1,21 +1,22 @@
-import sqlite3
+import psycopg2
+from psycopg2 import Error
 import logging
 
 class DatabaseManager:
     """Handles all database operations for storing invoice data."""
-    def __init__(self, db_path: str):
+    def __init__(self, db_url: str):
         """Initializes the DatabaseManager and connects to the database.
 
         Args:
-            db_path (str): The path to the SQLite database file.
+            db_url (str): The URL for the PostgreSQL database.
         """
-        self.db_path = db_path
+        self.db_url = db_url
         self.conn = None
         try:
-            self.conn = sqlite3.connect(self.db_path)
-            self.conn.row_factory = sqlite3.Row
-            logging.info(f"Successfully connected to database at {self.db_path}")
-        except sqlite3.Error as e:
+            self.conn = psycopg2.connect(self.db_url)
+            self.conn.autocommit = True  # Auto-commit for DDL operations
+            logging.info(f"Successfully connected to database at {self.db_url}")
+        except Error as e:
             logging.error(f"Database connection failed: {e}")
             raise
 
@@ -25,7 +26,7 @@ class DatabaseManager:
             cursor = self.conn.cursor()
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS invoices (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     invoice_number TEXT UNIQUE NOT NULL,
                     date TEXT,
                     client TEXT,
@@ -33,20 +34,18 @@ class DatabaseManager:
                     vat REAL,
                     currency TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
+                );
             """)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS line_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    invoice_id INTEGER,
+                    id SERIAL PRIMARY KEY,
+                    invoice_id INTEGER REFERENCES invoices(id) ON DELETE CASCADE,
                     description TEXT,
-                    amount REAL,
-                    FOREIGN KEY (invoice_id) REFERENCES invoices (id)
-                )
+                    amount REAL
+                );
             """)
-            self.conn.commit()
             logging.info("Database tables created or already exist.")
-        except sqlite3.Error as e:
+        except Error as e:
             logging.error(f"Table creation failed: {e}")
 
     def insert_invoice(self, validated_data: dict) -> None:
@@ -62,30 +61,53 @@ class DatabaseManager:
 
         try:
             cursor = self.conn.cursor()
-            cursor.execute("""
-                INSERT OR REPLACE INTO invoices (invoice_number, date, client, total, vat, currency)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                data.get('invoice_number'),
-                data.get('date'),
-                data.get('client'),
-                data.get('total'),
-                data.get('vat'),
-                data.get('currency')
-            ))
-            invoice_id = cursor.lastrowid
+            # Check if invoice_number already exists
+            cursor.execute("SELECT id FROM invoices WHERE invoice_number = %s", (data.get('invoice_number'),))
+            existing_invoice = cursor.fetchone()
+
+            if existing_invoice:
+                invoice_id = existing_invoice[0]
+                # Update existing invoice
+                cursor.execute("""
+                    UPDATE invoices
+                    SET date = %s, client = %s, total = %s, vat = %s, currency = %s
+                    WHERE id = %s
+                """, (
+                    data.get('date'),
+                    data.get('client'),
+                    data.get('total'),
+                    data.get('vat'),
+                    data.get('currency'),
+                    invoice_id
+                ))
+                # Delete old line items and insert new ones
+                cursor.execute("DELETE FROM line_items WHERE invoice_id = %s", (invoice_id,))
+            else:
+                # Insert new invoice
+                cursor.execute("""
+                    INSERT INTO invoices (invoice_number, date, client, total, vat, currency)
+                    VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;
+                """, (
+                    data.get('invoice_number'),
+                    data.get('date'),
+                    data.get('client'),
+                    data.get('total'),
+                    data.get('vat'),
+                    data.get('currency')
+                ))
+                invoice_id = cursor.fetchone()[0]
             
             if invoice_id and data.get('line_items'):
                 for item in data['line_items']:
                     cursor.execute("""
                         INSERT INTO line_items (invoice_id, description, amount)
-                        VALUES (?, ?, ?)
+                        VALUES (%s, %s, %s)
                     """, (invoice_id, item.get('description'), item.get('amount')))
             
             self.conn.commit()
-            logging.info(f"Successfully inserted invoice {data.get('invoice_number')} into the database.")
-        except sqlite3.Error as e:
-            logging.error(f"Failed to insert invoice {data.get('invoice_number')}: {e}")
+            logging.info(f"Successfully inserted/updated invoice {data.get('invoice_number')} into the database.")
+        except Error as e:
+            logging.error(f"Failed to insert/update invoice {data.get('invoice_number')}: {e}")
             self.conn.rollback()
 
     def close(self) -> None:

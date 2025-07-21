@@ -85,7 +85,7 @@ def run(watch: bool, db: bool, max_workers: int | None) -> None:
     db_manager = None
 
     if db:
-        db_manager = DatabaseManager(settings.database_path)
+        db_manager = DatabaseManager(settings.database_url)
         db_manager.create_tables()
 
     if watch:

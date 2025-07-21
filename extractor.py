@@ -141,42 +141,33 @@ class InvoiceParser:
             return None
 
     def get_document_type(self, text: str) -> str:
-        """Determines the type of document based on keywords in the text.
-
-        Args:
-            text (str): The text content of the document.
-
-        Returns:
-            str: The identified document type (e.g., "patent_and_trademark_institute").
-
-        Raises:
-            UnsupportedInvoiceFormatError: If the document type cannot be determined.
-        """
-        # Calculate scores for each document type based on keyword matches
+        """Determines the document type by scoring pattern matches."""
         scores = {}
         for doc_type, patterns in self.patterns.items():
+            if doc_type == 'document': continue  # Skip generic document for scoring
+            
+            score = 0
+            # Score based on keyword matches
             if "keywords" in patterns:
-                score = 0
                 for keyword in patterns["keywords"]:
                     if re.search(keyword, text, re.IGNORECASE):
                         score += 1
-                if score > 0:
-                    scores[doc_type] = score
+            
+            # Score based on other pattern matches (invoice_number, date, etc.)
+            for field, pattern in patterns.items():
+                if field not in ["keywords", "document_type", "line_items", "line_items_block"]:
+                    if re.search(pattern, text, re.IGNORECASE | re.DOTALL | re.UNICODE):
+                        score += 2  # Higher weight for specific field matches
 
-        # Sort document types by score (descending) and then by number of keywords (descending)
-        # This prioritizes more specific matches and then longer keyword lists
-        sorted_doc_types = sorted(
-            scores.items(),
-            key=lambda item: (item[1], len(self.patterns[item[0]].get("keywords", []))),
-            reverse=True,
-        )
+            if score > 0:
+                scores[doc_type] = score
 
-        if sorted_doc_types:
-            # Return the document type with the highest score
-            return sorted_doc_types[0][0]
-        
-        # Fallback mechanism: if no specific document type is identified, return "document"
-        return "document"
+        if not scores:
+            return "document"  # Fallback to generic
+
+        # Return the document type with the highest score
+        best_match = max(scores, key=scores.get)
+        return best_match
 
     def parse_line_items(self, text: str, doc_type: str) -> list:
         """Parses line items from the invoice text based on document-specific patterns.
@@ -191,41 +182,53 @@ class InvoiceParser:
         items = []
         layout_patterns = self.patterns.get(doc_type)
 
-        if not layout_patterns or "line_items" not in layout_patterns:
-            logging.warning(
-                f"No line item patterns defined for document type: {doc_type}"
-            )
+        layout_patterns = self.patterns.get(doc_type, {})
+        line_items_block_pattern = layout_patterns.get("line_items_block")
+        line_items_pattern = layout_patterns.get("line_items")
+
+        if not line_items_pattern:
+            logging.warning(f"No line item patterns defined for document type: {doc_type}")
             return items
 
-        line_items_pattern = layout_patterns["line_items"]
+        # If a block pattern is defined, search within that block
+        if line_items_block_pattern:
+            block_match = re.search(line_items_block_pattern, text, re.IGNORECASE | re.DOTALL | re.UNICODE)
+            if block_match:
+                text_block = block_match.group(1)
+                logging.info(f"Found line items block for {doc_type}.")
+            else:
+                logging.warning(f"Line items block not found for {doc_type}.")
+                text_block = text  # Fallback to full text
+        else:
+            text_block = text
+
         logging.info(f"Attempting to find line items with pattern: {line_items_pattern}")
 
         # Use finditer to get all matches with named groups
         found_matches = False
-        for match in re.finditer(line_items_pattern, text, re.IGNORECASE | re.DOTALL | re.UNICODE):
+        for match in re.finditer(line_items_pattern, text_block, re.IGNORECASE | re.DOTALL | re.UNICODE):
             found_matches = True
-            logging.info(f"Found potential line item match: {match.group(0)}")
             item_data = match.groupdict()
-            logging.info(f"Extracted item data from match: {item_data}")
-            quantity = item_data.get("quantity")
             description = item_data.get("description", "").strip()
             amount_str = item_data.get("amount")
             amount = self.normalize_amount(amount_str)
+            quantity = item_data.get("quantity")
 
             if description or amount is not None:
                 item = {"description": description, "amount": amount}
                 if quantity:
-                    item["quantity"] = int(quantity) # Convert quantity to int if present
+                    try:
+                        item["quantity"] = int(quantity)
+                    except (ValueError, TypeError):
+                        item["quantity"] = None
                 items.append(item)
                 logging.info(
-                    f"Parsed line item: Description='{description}', Amount={amount}, Quantity={quantity}"
+                    f"Parsed line item: Description='{description}', Amount={amount}, Quantity={item.get('quantity')}"
                 )
-            else:
-                logging.warning(f"Could not parse line item from match: {match.group(0)}. Description or amount is missing.")
 
-        if not found_matches: # If no items were found after iterating through all matches
+        if not found_matches:
             logging.warning(
-                f"No line items found for document type: {doc_type} using pattern: {line_items_pattern}. Text block: {text[:500]}..."
+                f"No line items found for document type: {doc_type} using pattern: {line_items_pattern}."
             )
 
         return items
