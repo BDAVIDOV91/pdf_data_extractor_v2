@@ -9,3 +9,4 @@ input_pdfs/
 docs/
 DATABASE_URL
 .env
+run_output.log
