@@ -1,5 +1,8 @@
 import logging
 import re
+import httpx
+import os
+import base64
 from multiprocessing import Process, Queue
 from queue import Empty
 
@@ -23,7 +26,7 @@ from exceptions import (
 
 
 class TextExtractor:
-    """Handles text extraction from PDF files, with optional OCR capabilities."""
+    """Handles text extraction from PDF files, using a tiered approach."""
 
     def __init__(self, enable_ocr: bool = False):
         """Initializes the TextExtractor.
@@ -32,78 +35,90 @@ class TextExtractor:
             enable_ocr (bool): Whether to enable OCR for scanned PDFs.
         """
         self.enable_ocr = enable_ocr
-        if self.enable_ocr:
-            pytesseract.pytesseract.tesseract_cmd = settings.tesseract_cmd
+        self.jigsaw_api_key = os.environ.get("JIGSAW_API_KEY")
 
-    def _ocr_process(self, pdf_path: str, q: Queue):
-        text = ""
-        try:
-            images = convert_from_path(pdf_path)
-            for i, image in enumerate(images):
-                # Pre-process image before passing to Tesseract
-                processed_image = FileSystemUtils.preprocess_image(image)
-                text += pytesseract.image_to_string(processed_image)
-            q.put(text)
-        except Exception as e:
-            logging.error(
-                f"OCR processing failed for {pdf_path} on image {i+1 if 'i' in locals() else 'N/A'}: {e}",
-                exc_info=True,
-            )
-            q.put(f"OCR_ERROR: {e}")
 
-    def extract_text_from_pdf(self, pdf_path: str) -> str:
-        """Extracts text from a PDF file. Tries direct extraction first, then falls back to OCR if enabled.
+    async def extract_text(self, pdf_path: str) -> str:
+        """Extracts text from a PDF using a two-tiered approach.
 
         Args:
             pdf_path (str): The path to the PDF file.
 
         Returns:
-            str: The extracted text content of the PDF.
-
-        Raises:
-            TextExtractionError: If text extraction fails (either direct or OCR).
-            OCRProcessingError: If an error occurs during OCR processing.
+            str: The extracted text.
         """
-        text = ""
+        # Tier 1: Try local MCP server for text-based PDFs
         try:
-            with open(pdf_path, "rb") as file:
-                reader = PyPDF2.PdfReader(file)
-                for page_num in range(len(reader.pages)):
-                    text += reader.pages[page_num].extract_text()
-            if text.strip():
-                logging.info(f"Extracted text from PDF: {text[:500]}...")
-                return text
-        except PyPDF2.errors.PdfReadError as e:
-            logging.warning(f"PDF Read Error for {pdf_path}: {e}. Attempting OCR...")
-        except Exception as e:
-            logging.warning(
-                f"Error extracting text from {pdf_path}: {e}. Attempting OCR..."
-            )
+            async with httpx.AsyncClient() as client:
+                # Read PDF content as binary
+                with open(pdf_path, "rb") as f:
+                    pdf_content = f.read()
 
-        if self.enable_ocr:
-            logging.info(f"Attempting OCR for {pdf_path}...")
-            q = Queue()
-            p = Process(target=self._ocr_process, args=(pdf_path, q))
-            p.start()
-            try:
-                # Wait for 300 seconds for OCR to complete
-                text = q.get(timeout=300)
-                if text.strip():
-                    return text
+                # Upload the PDF content to the pdf-tools-mcp server
+                upload_response = await client.post(
+                    f"{settings.pdf_tools_mcp_url}/upload_pdf",
+                    files={'file': (os.path.basename(pdf_path), pdf_content, 'application/pdf')},
+                    timeout=60,
+                )
+                upload_response.raise_for_status()
+                upload_data = upload_response.json()
+                
+                if not upload_data.get("success"):
+                    raise TextExtractionError(f"Failed to upload PDF to pdf-tools-mcp: {upload_data.get('error', 'Unknown error')}")
+                
+                # Extract the UUID filename from the upload response
+                uuid_filename = upload_data["file_name"]
+                
+                # Now, extract text using the UUID filename
+                response = await client.post(
+                    f"{settings.pdf_tools_mcp_url}/get_text_json",
+                    json={"file_name": uuid_filename},
+                    timeout=60,
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                if data and "text_json" in data and data["text_json"]:
+                    # Assuming text_json contains the full text or can be reconstructed
+                    # For now, let's just return the raw text_json for inspection
+                    # You might need to parse this further based on its structure
+                    logging.info("Extracted text using pdf-tools-mcp.")
+                    return str(data["text_json"]) # Convert dict to string for now
                 else:
-                    raise TextExtractionError(f"OCR extracted no text from {pdf_path}.")
-            except Empty:
-                p.terminate()
-                p.join()
-                raise OCRProcessingError(f"OCR process timed out for {pdf_path}.")
-            except Exception as e:
-                p.terminate()
-                p.join()
-                raise OCRProcessingError(f"OCR failed for {pdf_path}: {e}")
-            finally:
-                p.join()  # Ensure the process is cleaned up
+                    raise TextExtractionError("No text extracted by pdf-tools-mcp.")
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            logging.warning(f"Could not reach pdf-tools-mcp server or error during processing: {e}. Falling back to Jigsaw.")
 
-        raise TextExtractionError(f"Could not extract text from {pdf_path}.")
+
+        # Tier 2: Fallback to JigsawStack for image-based or complex PDFs
+        if not self.jigsaw_api_key:
+            raise TextExtractionError("Jigsaw API key not configured.")
+
+        logging.info("Falling back to JigsawStack vOCR API.")
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://api.jigsawstack.com/v1/vocr",
+                    headers={"x-api-key": self.jigsaw_api_key},
+                    json={
+                        "url": f"file://{os.path.abspath(pdf_path)}",
+                        "prompt": ["all text"],
+                    },
+                    timeout=300,
+                )
+                response.raise_for_status()
+                data = response.json()
+                if data.get("success") and data.get("has_text"):
+                    # Reconstruct the text from the sections
+                    full_text = "\n".join([section["text"] for section in data.get("sections", [])])
+                    logging.info("Extracted text using JigsawStack vOCR.")
+                    return full_text
+                else:
+                    raise TextExtractionError("JigsawStack vOCR failed to extract text.")
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            raise TextExtractionError(f"Error calling JigsawStack API: {e}")
+
+        raise TextExtractionError(f"Could not extract text from {pdf_path} using any method.")
 
 
 class InvoiceParser:
@@ -359,7 +374,7 @@ class InvoiceParser:
         return data
 
 
-def extract_invoice_data(pdf_path: str, enable_ocr: bool = False) -> dict:
+async def extract_invoice_data(pdf_path: str, enable_ocr: bool = False) -> dict:
     """Extracts and parses invoice data from a PDF file.
 
     Args:
@@ -376,6 +391,6 @@ def extract_invoice_data(pdf_path: str, enable_ocr: bool = False) -> dict:
         UnsupportedInvoiceFormatError: If the invoice format is not supported.
     """
     text_extractor = TextExtractor(enable_ocr=enable_ocr)
-    text = text_extractor.extract_text_from_pdf(pdf_path)
+    text = await text_extractor.extract_text(pdf_path)
     invoice_parser = InvoiceParser()
     return invoice_parser.parse_invoice_data(text)

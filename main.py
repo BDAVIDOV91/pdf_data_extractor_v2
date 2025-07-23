@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import os
+import threading
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from logging.handlers import RotatingFileHandler
 
@@ -40,11 +42,13 @@ def setup_logging() -> None:
     logger.addHandler(console_handler)
 
 
-def process_pdf(pdf_path: str) -> dict | None:
+async def process_pdf(pdf_path: str) -> dict | None:
     """Processes a single PDF file."""
     try:
         logging.info(f"Processing {os.path.basename(pdf_path)}...")
-        extracted_data = extract_invoice_data(pdf_path, enable_ocr=settings.enable_ocr)
+        extracted_data = await extract_invoice_data(
+            pdf_path, enable_ocr=settings.enable_ocr
+        )
         if extracted_data:
             validator = Validator()
             validated_data = validator.validate_and_normalize_data(extracted_data)
@@ -77,6 +81,11 @@ def cli():
 )
 def run(watch: bool, db: bool, max_workers: int | None) -> None:
     """Main function to run the PDF data extractor and reporter."""
+    asyncio.run(amain(watch, db, max_workers))
+
+
+async def amain(watch: bool, db: bool, max_workers: int | None) -> None:
+    """Main async function to run the PDF data extractor and reporter."""
     logging.info("PDF Data Extractor started.")
 
     input_dir = settings.input_dir
@@ -98,33 +107,27 @@ def run(watch: bool, db: bool, max_workers: int | None) -> None:
             )
             return
 
-        all_validated_data = []
-        processed_files = 0
-        successful_extractions = 0
-        failed_extractions = 0
-
         pdf_files = [
-            os.path.join(input_dir, f)
+            os.path.abspath(os.path.join(input_dir, f))
             for f in os.listdir(input_dir)
             if f.endswith(".pdf")
         ]
         processed_files = len(pdf_files)
 
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            future_to_pdf = {
-                executor.submit(process_pdf, pdf_file): pdf_file
-                for pdf_file in pdf_files
-            }
-            for future in as_completed(future_to_pdf):
-                result = future.result()
-                if result:
-                    all_validated_data.append(result)
-                    report_generator.generate_report(result)
-                    if db_manager:
-                        db_manager.insert_invoice(result)
-                    successful_extractions += 1
-                else:
-                    failed_extractions += 1
+        all_validated_data = []
+        successful_extractions = 0
+        failed_extractions = 0
+
+        for pdf_file in pdf_files:
+            result = await process_pdf(pdf_file)
+            if result:
+                all_validated_data.append(result)
+                report_generator.generate_report(result)
+                if db_manager:
+                    db_manager.insert_invoice(result)
+                successful_extractions += 1
+            else:
+                failed_extractions += 1
 
         if all_validated_data:
             report_generator.export_to_csv_excel(all_validated_data)
@@ -145,4 +148,5 @@ def run(watch: bool, db: bool, max_workers: int | None) -> None:
 
 
 if __name__ == "__main__":
+    cli()
     cli()

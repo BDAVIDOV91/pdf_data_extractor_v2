@@ -10,3 +10,4 @@ docs/
 DATABASE_URL
 .env
 run_output.log
+pdf-tools-mcp/**
