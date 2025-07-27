@@ -2,46 +2,56 @@ patent_and_trademark_institute:
   document_type: patent_invoice
   keywords:
     - "Patent and Trademark Institute"
-  invoice_number: 'Invoice No:\s*(\d+)'
+  invoice_number: 'Invoice No\.\s*(\d+)'
   date: 'Date:\s*(\d{2}\.\d{2}\.\d{4})'
   total: 'Total:\s*([\d.,]+)'
   vat: 'VAT:\s*([\d.,]+)'
   client: 'Bill To:\s*([\s\S]+?)(?:Invoice No:|Date:)'
-  line_items_block: 'Description Amount Unit Price Quantity Unit\s*([\s\S]+?)\s*Subtotal:'
-  line_items: '(?P<description>.+?)\s+(?P<amount>[\d.,]+)\s+(?P<unit_price>[\d.,]+)\s+(?P<quantity>\d+)'
+  line_items_block: '(?:Description|Item|Product|Service)(?:[^\n]*\n)*([\s\S]+?)(?:Subtotal|Total|VAT|ДДС|ОБЩО|CYMA):'
+  line_items: '(?P<description>.+?)\s+(?P<quantity>\d+)?\s*(?P<unit_price>[\d.,]+)\s+(?P<amount>[\d.,]+)'
 
 vukov_development_services:
   document_type: vukov_invoice
   keywords:
     - "Вуков Дивелъпмънт Сървисис"
-  invoice_number: 'Фактура\s*Номер:\s*(\d+)'
-  date: 'Дата:\s*(\d{2}\.\d{2}\.\d{4})'
+  invoice_number: '(?:Фактура|Invoice)\s*(?:Номер|No|Num|№)?[:\s]*([A-Z0-9-]+)'
+  date: '(?:Дата|Date)[:\s]*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})'
   total: 'Сума за плащане:\s*([\d.,]+)'
   vat: 'ДДС:\s*([\d.,]+)'
-  client: 'Получател Доставчик\s*([\s\S]+?)\s*ДДС №'
-  line_items_block: 'Сума № Наименование на стоката/услугата(?:[\s\S]+?)Цена\s*([\s\S]+?)\s*Данъчна основа:'
-  line_items: '(?P<description>.+?)\s+(?P<quantity>\d+\.\d+)\s+(?P<price>\d+\.\d+)\s+(?P<amount>[\d.,]+)'
+  client: '(?:Получател|Recipient|Client|Customer)\s*(?:Доставчик|Provider)?\s*([\s\S]+?)(?:ДДС №|VAT Number|VAT No|EIK|ЕИК)'
+  line_items_block: '(?:Сума|Amount|Price)\s*(?:№|No)?\s*(?:Наименование на стоката/услугата|Description|Item|Product|Service)(?:[^\n]*\n)*([\s\S]+?)(?:Данъчна основа|Tax Base|Subtotal|Total|VAT|ДДС|ОБЩО|CYMA):'
+  line_items: '(?P<description>.+?)\s+(?P<quantity>[\d.,]+)?\s*(?P<price>[\d.,]+)?\s*(?P<amount>[\d.,]+)'
 
 etkyusi_eood:
   document_type: etkyusi_invoice
   keywords:
     - "ЕтКюСи ЕООД"
-  invoice_number: 'Фактура\s*No:(\d+)'
-  date: 'Дата на издаване:\s*(\d{2}\.\d{2}\.\d{4})'
+  invoice_number: '(?:Фактура|Invoice)\s*(?:No|№)?[: ]*([A-Z0-9-]+)'
+  date: '(?:Дата на издаване|Date of Issue|Date)[:\s]*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})'
   total: 'Сума за плащане:\s*([\d.,]+)'
   vat: 'Начислен ДДС(?:\(\d+%\))?:\s*([\d.,]+)'
-  client: 'Получател:\s*Име на фирма:\s*([^\n]+)'
-  line_items_block: 'No Име на стоката/услугата Мярка К-во Ед. цена Стойност\s*([\s\S]+?)\s*Получател:'
-  line_items: '(?P<description>.+?)\s+(?P<measure>\w+)\s+(?P<quantity>[\d.,]+)\s+(?P<price>[\d.,]+)\s+(?P<amount>[\d.,]+)'
+  client: '(?:Получател|Recipient|Client|Customer)[: ]*(?:Име на фирма|Company Name)?[: ]*([^\n]+)'
+  line_items_block: '(?:No|№)?\s*(?:Име на стоката/услугата|Description|Item|Product|Service)(?:[^\n]*\n)*([\s\S]+?)(?:Получател|Recipient|Client|Customer):'
+  line_items: '(?P<description>.+?)\s+(?P<measure>\w+)?\s*(?P<quantity>[\d.,]+)?\s*(?P<price>[\d.,]+)?\s*(?P<amount>[\d.,]+)'
 
 receipt:
   document_type: receipt
   keywords:
     - "фискален бон"
     - "касова бележка"
-  total: '(?:ОБЩО|CYMA):\s*([\d.,]+)'
-  date: '(\d{2}\.\d{2}\.\d{4})'
-  line_items: '(?P<description>.+?)\s+(?P<amount>[\d.,]+)'
+    - "receipt"
+    - "cash receipt"
+    - "sales receipt"
+    - "invoice"
+  merchant_name: '(?i)(?:Merchant|Store|Shop|Company|Продавач|Магазин|Фирма):\s*([^\n]+)'
+  total: '(?i)(?:ОБЩО|CYMA|Total|Grand Total|Amount Due|Sum|Всичко)[:\s]*([\d.,]+)'
+  vat: '(?i)(?:VAT|ДДС|Tax)[:\s]*([\d.,]+)'
+  date: '(?i)(?:Date|Дата|Dato)[:\s]*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}-\d{2})'
+  transaction_id: '(?i)(?:Transaction ID|Trn ID|Ref No|Номер на транзакция)[:\s]*([A-Z0-9]+)'
+  payment_method: '(?i)(?:Payment Method|Method of Payment|Начин на плащане)[:\s]*(Cash|Card|Credit Card|Debit Card|Кеш|Карта)'
+  line_items_block: '(?i)(?:Description|Item|Product|Наименование|Стока)(?:[\s\S]+?)(?:Total|Sum|Сума)[:\s]*([\s\S]+?)(?:Subtotal|VAT|ДДС|ОБЩО|CYMA)'
+  line_items: '(?P<description>.+?)\s+(?P<quantity>\d+)?\s*(?P<amount>[\d.,]+)'
+
 
 document:
   document_type: generic_document

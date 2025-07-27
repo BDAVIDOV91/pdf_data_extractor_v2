@@ -1,4 +1,5 @@
 __pycache__/
+.pytest_cache/
 venv/
 logs/
 output_reports/
@@ -11,3 +12,6 @@ DATABASE_URL
 .env
 run_output.log
 pdf-tools-mcp/**
+parsemypdfs/**
+mcp-sequentialthinking-tools/**
+utils/

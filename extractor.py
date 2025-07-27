@@ -1,28 +1,24 @@
-import logging
-import re
-import httpx
-import os
 import base64
+import logging
+import os
+import re
 from multiprocessing import Process, Queue
 from queue import Empty
 
+import httpx
 import PyPDF2
 import pytesseract
 import yaml
 from pdf2image import convert_from_path
 from PIL import Image
-
-from utils import FileSystemUtils  # Import FileSystemUtils
-
+import cv2
+import numpy as np
 
 from config import settings
-import yaml
-from exceptions import (
-    InvoiceParsingError,
-    OCRProcessingError,
-    TextExtractionError,
-    UnsupportedInvoiceFormatError,
-)
+from exceptions import (InvoiceParsingError, OCRProcessingError,
+                        TextExtractionError, UnsupportedInvoiceFormatError)
+from utils import FileSystemUtils, pymupdf_extract
+from parsemypdf.utils.pdf_to_image import PDFToJPGConverter
 
 
 class TextExtractor:
@@ -39,7 +35,7 @@ class TextExtractor:
 
 
     async def extract_text(self, pdf_path: str) -> str:
-        """Extracts text from a PDF using a two-tiered approach.
+        """Extracts text from a PDF using a tiered approach.
 
         Args:
             pdf_path (str): The path to the PDF file.
@@ -47,77 +43,60 @@ class TextExtractor:
         Returns:
             str: The extracted text.
         """
-        # Tier 1: Try local MCP server for text-based PDFs
+        # Tier 1: Try local PyMuPDF
         try:
-            async with httpx.AsyncClient() as client:
-                # Read PDF content as binary
-                with open(pdf_path, "rb") as f:
-                    pdf_content = f.read()
+            text = pymupdf_extract(pdf_path)
+            if text and text.strip():
+                logging.info("Extracted text using local PyMuPDF.")
+                return text
+        except Exception as e:
+            logging.warning(f"Local PyMuPDF failed: {e}. Falling back to local OCR.")
 
-                # Upload the PDF content to the pdf-tools-mcp server
-                upload_response = await client.post(
-                    f"{settings.pdf_tools_mcp_url}/upload_pdf",
-                    files={'file': (os.path.basename(pdf_path), pdf_content, 'application/pdf')},
-                    timeout=60,
-                )
-                upload_response.raise_for_status()
-                upload_data = upload_response.json()
+        # Tier 2: Local OCR with image pre-processing
+        if self.enable_ocr:
+            logging.info("Attempting local OCR with image pre-processing.")
+            try:
+                converter = PDFToJPGConverter()
+                images = converter.convert_pdf(pdf_path)
+                full_text = []
+                for img in images:
+                    # Convert PIL Image to OpenCV format
+                    open_cv_image = np.array(img)
+                    # Convert RGB to BGR
+                    open_cv_image = open_cv_image[:, :, ::-1].copy()
+
+                    # Pre-processing: Grayscale, Deskew, and Adaptive Thresholding
+                    gray = cv2.cvtColor(open_cv_image, cv2.COLOR_BGR2GRAY)
+
+                    # Deskewing (simple example, can be improved)
+                    coords = np.column_stack(np.where(gray > 0))
+                    angle = cv2.minAreaRect(coords)[-1]
+                    if angle < -45:
+                        angle = -(90 + angle)
+                    else:
+                        angle = -angle
+                    (h, w) = gray.shape[:2]
+                    center = (w // 2, h // 2)
+                    M = cv2.getRotationMatrix2D(center, angle, 1.0)
+                    rotated = cv2.warpAffine(gray, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+                    # Adaptive Thresholding
+                    thresh = cv2.adaptiveThreshold(rotated, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                                   cv2.THRESH_BINARY, 11, 2)
+
+                    # Perform OCR
+                    text = pytesseract.image_to_string(thresh)
+                    full_text.append(text)
                 
-                if not upload_data.get("success"):
-                    raise TextExtractionError(f"Failed to upload PDF to pdf-tools-mcp: {upload_data.get('error', 'Unknown error')}")
-                
-                # Extract the UUID filename from the upload response
-                uuid_filename = upload_data["file_name"]
-                
-                # Now, extract text using the UUID filename
-                response = await client.post(
-                    f"{settings.pdf_tools_mcp_url}/get_text_json",
-                    json={"file_name": uuid_filename},
-                    timeout=60,
-                )
-                response.raise_for_status()
-                data = response.json()
-                
-                if data and "text_json" in data and data["text_json"]:
-                    # Assuming text_json contains the full text or can be reconstructed
-                    # For now, let's just return the raw text_json for inspection
-                    # You might need to parse this further based on its structure
-                    logging.info("Extracted text using pdf-tools-mcp.")
-                    return str(data["text_json"]) # Convert dict to string for now
+                if full_text:
+                    logging.info("Extracted text using local OCR.")
+                    return "\n".join(full_text)
                 else:
-                    raise TextExtractionError("No text extracted by pdf-tools-mcp.")
-        except (httpx.RequestError, httpx.HTTPStatusError) as e:
-            logging.warning(f"Could not reach pdf-tools-mcp server or error during processing: {e}. Falling back to Jigsaw.")
-
-
-        # Tier 2: Fallback to JigsawStack for image-based or complex PDFs
-        if not self.jigsaw_api_key:
-            raise TextExtractionError("Jigsaw API key not configured.")
-
-        logging.info("Falling back to JigsawStack vOCR API.")
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    "https://api.jigsawstack.com/v1/vocr",
-                    headers={"x-api-key": self.jigsaw_api_key},
-                    json={
-                        "url": f"file://{os.path.abspath(pdf_path)}",
-                        "prompt": ["all text"],
-                    },
-                    timeout=300,
-                )
-                response.raise_for_status()
-                data = response.json()
-                if data.get("success") and data.get("has_text"):
-                    # Reconstruct the text from the sections
-                    full_text = "\n".join([section["text"] for section in data.get("sections", [])])
-                    logging.info("Extracted text using JigsawStack vOCR.")
-                    return full_text
-                else:
-                    raise TextExtractionError("JigsawStack vOCR failed to extract text.")
-        except (httpx.RequestError, httpx.HTTPStatusError) as e:
-            raise TextExtractionError(f"Error calling JigsawStack API: {e}")
-
+                    raise OCRProcessingError("Local OCR failed to extract text.")
+            except Exception as e:
+                logging.error(f"Error during local OCR processing: {e}")
+                raise OCRProcessingError(f"Local OCR processing failed: {e}")
+        
         raise TextExtractionError(f"Could not extract text from {pdf_path} using any method.")
 
 

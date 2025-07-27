@@ -1,0 +1,6 @@
+[submodule "parsemypdf"]
+	path = parsemypdf
+	url = https://github.com/genieincodebottle/parsemypdf.git
+[submodule "mcp-sequentialthinking-tools"]
+	path = mcp-sequentialthinking-tools
+	url = https://github.com/spences10/mcp-sequentialthinking-tools.git

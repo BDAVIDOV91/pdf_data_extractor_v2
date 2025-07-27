@@ -27,5 +27,5 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
-settings = Settings()
+settings.database_url = settings.database_url.strip('"\' ').strip()
+settings.database_url = settings.database_url.strip('"\' ').strip()
