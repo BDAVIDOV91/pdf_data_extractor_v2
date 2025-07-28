@@ -12,13 +12,29 @@ class DatabaseManager:
         """
         self.db_url = db_url
         self.conn = None
+        self.connect()
+
+    def connect(self) -> None:
+        """Establishes a new database connection."""
         try:
             self.conn = psycopg2.connect(self.db_url)
-            self.conn.autocommit = True  # Auto-commit for DDL operations
             logging.info(f"Successfully connected to database at {self.db_url}")
         except Error as e:
             logging.error(f"Database connection failed: {e}")
             raise
+
+    def reconnect(self) -> None:
+        """Re-establishes the database connection if it's closed or invalid."""
+        if self.conn is None or self.conn.closed:
+            logging.info("Reconnecting to the database...")
+            self.connect()
+        else:
+            try:
+                # Check if the connection is still valid
+                self.conn.cursor().execute("SELECT 1")
+            except Error as e:
+                logging.warning(f"Existing connection is invalid: {e}. Reconnecting...")
+                self.connect()
 
     def create_tables(self) -> None:
         """Creates the necessary tables if they don't already exist."""
@@ -60,6 +76,7 @@ class DatabaseManager:
             return
 
         try:
+            self.reconnect()
             cursor = self.conn.cursor()
             # Check if invoice_number already exists
             cursor.execute("SELECT id FROM invoices WHERE invoice_number = %s", (data.get('invoice_number'),))

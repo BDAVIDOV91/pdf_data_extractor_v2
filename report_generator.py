@@ -57,12 +57,12 @@ class ReportGenerator:
             invoice_data = validated_invoice['data']
             errors = validated_invoice['validation_errors']
             processed_row = {
-                "invoice_number": invoice_data.get('invoice_number'),
-                "date": invoice_data.get('date'),
-                "client": invoice_data.get('client'),
-                "total": invoice_data.get('total'),
-                "vat": invoice_data.get('vat'),
-                "currency": invoice_data.get('currency')
+                "invoice_number": invoice_data.get('invoice_number', ''),
+                "date": invoice_data.get('date', ''),
+                "client": invoice_data.get('client', ''),
+                "total": invoice_data.get('total', ''),
+                "vat": invoice_data.get('vat', ''),
+                "currency": invoice_data.get('currency', '')
             }
             processed_data.append(processed_row)
 

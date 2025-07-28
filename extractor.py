@@ -7,18 +7,21 @@ from queue import Empty
 
 import httpx
 import PyPDF2
-import pytesseract
 import yaml
 from pdf2image import convert_from_path
 from PIL import Image
 import cv2
 import numpy as np
+from docling.document_converter import DocumentConverter
+import ollama
+from parsemypdf.utils.pdf_to_image import PDFToJPGConverter
+import shutil
+
 
 from config import settings
 from exceptions import (InvoiceParsingError, OCRProcessingError,
                         TextExtractionError, UnsupportedInvoiceFormatError)
 from utils import FileSystemUtils, pymupdf_extract
-from parsemypdf.utils.pdf_to_image import PDFToJPGConverter
 
 
 class TextExtractor:
@@ -34,15 +37,43 @@ class TextExtractor:
         self.jigsaw_api_key = os.environ.get("JIGSAW_API_KEY")
 
 
+    async def _extract_text_with_llama_vision(self, pdf_path: str) -> str:
+        converter = PDFToJPGConverter()
+        output_path = "converted_images/temp"
+        os.makedirs(output_path, exist_ok=True)  # Ensure directory exists
+        converted_files = converter.convert_pdf(pdf_path, output_path)
+
+        final_response = ""
+        for file_path in converted_files:
+            try:
+                with open(file_path, "rb") as image_file:
+                    base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+
+                response = ollama.chat(
+                    model='x/llama3.2-vision:11b',
+                    messages=[{
+                        'role': 'user',
+                        'content': """You are an expert at extracting and structuring content from image. 
+                                        Please extract all the text content from the provided image, maintaining the 
+                                        structure and formatting of each element.
+                                        Format tables properly in markdown format. Preserve all numerical data and 
+                                        relationships between elements as given in the images'""",
+                        'images': [base64_image]
+                    }]
+                )
+                final_response += response['message']['content'] + "\n"
+            except Exception as e:
+                logging.error(f"Error processing image {file_path} with Llama Vision: {e}")
+            finally:
+                if os.path.exists(file_path):
+                    os.remove(file_path)  # Clean up temporary image file
+        if os.path.exists(output_path):
+            shutil.rmtree(output_path)  # Clean up temporary directory
+        return final_response
+
+
     async def extract_text(self, pdf_path: str) -> str:
-        """Extracts text from a PDF using a tiered approach.
-
-        Args:
-            pdf_path (str): The path to the PDF file.
-
-        Returns:
-            str: The extracted text.
-        """
+        """Extracts text from a PDF using a tiered approach."""
         # Tier 1: Try local PyMuPDF
         try:
             text = pymupdf_extract(pdf_path)
@@ -50,57 +81,40 @@ class TextExtractor:
                 logging.info("Extracted text using local PyMuPDF.")
                 return text
         except Exception as e:
-            logging.warning(f"Local PyMuPDF failed: {e}. Falling back to local OCR.")
+            logging.warning(f"Local PyMuPDF failed: {e}. Falling back to Docling OCR.")
 
-        # Tier 2: Local OCR with image pre-processing
+        # Tier 2: Docling OCR
         if self.enable_ocr:
-            logging.info("Attempting local OCR with image pre-processing.")
+            logging.info("Attempting Docling OCR.")
             try:
-                converter = PDFToJPGConverter()
-                images = converter.convert_pdf(pdf_path)
-                full_text = []
-                for img in images:
-                    # Convert PIL Image to OpenCV format
-                    open_cv_image = np.array(img)
-                    # Convert RGB to BGR
-                    open_cv_image = open_cv_image[:, :, ::-1].copy()
-
-                    # Pre-processing: Grayscale, Deskew, and Adaptive Thresholding
-                    gray = cv2.cvtColor(open_cv_image, cv2.COLOR_BGR2GRAY)
-
-                    # Deskewing (simple example, can be improved)
-                    coords = np.column_stack(np.where(gray > 0))
-                    angle = cv2.minAreaRect(coords)[-1]
-                    if angle < -45:
-                        angle = -(90 + angle)
-                    else:
-                        angle = -angle
-                    (h, w) = gray.shape[:2]
-                    center = (w // 2, h // 2)
-                    M = cv2.getRotationMatrix2D(center, angle, 1.0)
-                    rotated = cv2.warpAffine(gray, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
-
-                    # Adaptive Thresholding
-                    thresh = cv2.adaptiveThreshold(rotated, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                                   cv2.THRESH_BINARY, 11, 2)
-
-                    # Perform OCR
-                    text = pytesseract.image_to_string(thresh)
-                    full_text.append(text)
-                
-                if full_text:
-                    logging.info("Extracted text using local OCR.")
-                    return "\n".join(full_text)
+                converter = DocumentConverter()
+                result = converter.convert(pdf_path)
+                docling_text = result.document.export_to_markdown()
+                if docling_text and len(docling_text.strip()) > 100:
+                    logging.info("Extracted text using Docling OCR.")
+                    return docling_text
                 else:
-                    raise OCRProcessingError("Local OCR failed to extract text.")
+                    logging.warning("Docling OCR produced insufficient text. Falling back to Llama Vision OCR.")
+                    raise OCRProcessingError("Docling OCR failed to extract sufficient text.")
             except Exception as e:
-                logging.error(f"Error during local OCR processing: {e}")
-                raise OCRProcessingError(f"Local OCR processing failed: {e}")
+                logging.error(f"Error during Docling OCR processing: {e}")
+                logging.warning(f"Docling OCR failed: {e}. Falling back to Llama Vision OCR.")
+                try:
+                    llama_text = await self._extract_text_with_llama_vision(pdf_path)
+                    if llama_text and llama_text.strip():
+                        logging.info("Extracted text using Llama Vision OCR.")
+                        return llama_text
+                    else:
+                        raise OCRProcessingError("Llama Vision OCR failed to extract text.")
+                except Exception as llama_e:
+                    logging.error(f"Error during Llama Vision OCR processing: {llama_e}")
+                    raise OCRProcessingError(f"Llama Vision OCR processing failed: {llama_e}")
         
         raise TextExtractionError(f"Could not extract text from {pdf_path} using any method.")
 
 
 class InvoiceParser:
+
     """Parses invoice data from extracted text using predefined regex patterns."""
 
     def __init__(self):
@@ -240,14 +254,14 @@ class InvoiceParser:
             InvoiceParsingError: If the input text is None or no patterns are found for the document type.
         """
         data = {
-            "invoice_number": "Not found",
-            "date": "Not found",
-            "client": "Not found",
+            "invoice_number": None,
+            "date": None,
+            "client": None,
             "line_items": [],
-            "total": "Not found",
-            "vat": "Not found",
-            "currency": "Not found",
-            "transaction_id": "Not found"
+            "total": None,
+            "vat": None,
+            "currency": None,
+            "transaction_id": None
         }
 
         if text is None:
@@ -278,6 +292,7 @@ class InvoiceParser:
 
         logging.info(f"Using patterns: {layout_patterns}")
         logging.debug(f"DEBUG: Layout patterns being used: {layout_patterns}")
+        print(f"Docling Extracted Text: {text}") # Temporarily print raw text
         print(f"DEBUG: Layout patterns being used: {layout_patterns}")
 
         fields_to_extract = ["invoice_number", "date", "client", "total", "vat"]
@@ -298,7 +313,7 @@ class InvoiceParser:
                     logging.info(f"SUCCESS: Found raw value for '{field}': '{extracted_value}'")
                     if field in ["total", "vat"]:
                         data[field] = self.normalize_amount(extracted_value)
-                        if field == "vat" and data[field] is None:
+                        if data[field] is None:
                             data[field] = (
                                 0.0  # Set VAT to 0.0 if found but value is empty
                             )
@@ -336,7 +351,7 @@ class InvoiceParser:
                 logging.warning("Total not found for patent invoice.")
 
         # Currency extraction (can be generalized further if patterns become more complex)
-        if data["total"] != "Not found":
+        if data["total"] is not None:
             if re.search(r"BGN|лв", text, re.IGNORECASE):
                 data["currency"] = "BGN"
             elif re.search(r"EUR|€", text, re.IGNORECASE):
@@ -353,7 +368,10 @@ class InvoiceParser:
         return data
 
 
-async def extract_invoice_data(pdf_path: str, enable_ocr: bool = False) -> dict:
+
+
+
+async def extract_invoice_data(pdf_path: str, enable_ocr: bool = False, invoice_parser: InvoiceParser = None) -> dict:
     """Extracts and parses invoice data from a PDF file.
 
     Args:
@@ -371,5 +389,6 @@ async def extract_invoice_data(pdf_path: str, enable_ocr: bool = False) -> dict:
     """
     text_extractor = TextExtractor(enable_ocr=enable_ocr)
     text = await text_extractor.extract_text(pdf_path)
-    invoice_parser = InvoiceParser()
+    if invoice_parser is None:
+        invoice_parser = InvoiceParser()
     return invoice_parser.parse_invoice_data(text)

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from pydantic import Field
@@ -28,4 +29,4 @@ class Settings(BaseSettings):
 
 settings = Settings()
 settings.database_url = settings.database_url.strip('"\' ').strip()
-settings.database_url = settings.database_url.strip('"\' ').strip()
+os.environ["JIGSAW_API_KEY"] = "sk_7f6b1eae79777501ab1a9bf9b1d0ad520df9bfafa6a077e97d10c4457a339e5f9cf6765844485b57275d8e0a8969c84a23c2449f08eeef14911cacd353ccaabf024j3PwthFGU2HS7eIVXI"

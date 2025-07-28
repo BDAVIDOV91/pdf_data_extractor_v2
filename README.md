@@ -111,9 +111,6 @@ To store the extracted data in the PostgreSQL database, use the `--db` flag. Thi
 
 First, ensure you have a `.env` file in the project root with your Supabase `DATABASE_URL`:
 
-```
-DATABASE_URL="postgresql://postgres:[YOUR-PASSWORD]@aws-0-eu-central-2.pooler.supabase.com:5432/postgres"
-```
 
 Then run:
 

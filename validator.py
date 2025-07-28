@@ -22,7 +22,7 @@ class Validator:
             required_fields = ["invoice_number", "date", "total"]
 
         for field in required_fields:
-            if data.get(field) == "Not found" or data.get(field) is None:
+            if data.get(field) is None:
                 errors.append(f"Missing required field: {field}")
 
         # Validate and normalize date

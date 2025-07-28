@@ -9,7 +9,7 @@ import click
 
 from config import settings
 from database import DatabaseManager
-from extractor import extract_invoice_data
+from extractor import extract_invoice_data, InvoiceParser
 from report_generator import ReportGenerator
 from utils import FileSystemUtils
 from validator import Validator
@@ -42,12 +42,12 @@ def setup_logging() -> None:
     logger.addHandler(console_handler)
 
 
-async def process_pdf(pdf_path: str) -> dict | None:
+async def process_pdf(pdf_path: str, invoice_parser: InvoiceParser) -> dict | None:
     """Processes a single PDF file."""
     try:
         logging.info(f"Processing {os.path.basename(pdf_path)}...")
         extracted_data = await extract_invoice_data(
-            pdf_path, enable_ocr=settings.enable_ocr
+            pdf_path, enable_ocr=settings.enable_ocr, invoice_parser=invoice_parser
         )
         if extracted_data:
             validator = Validator()
@@ -92,6 +92,7 @@ async def amain(watch: bool, db: bool, max_workers: int | None) -> None:
     output_dir = settings.output_dir
     report_generator = ReportGenerator(output_dir)
     db_manager = None
+    invoice_parser = InvoiceParser() # Instantiate InvoiceParser once
 
     if db:
         db_manager = DatabaseManager(settings.database_url)
@@ -119,7 +120,7 @@ async def amain(watch: bool, db: bool, max_workers: int | None) -> None:
         failed_extractions = 0
 
         for pdf_file in pdf_files:
-            result = await process_pdf(pdf_file)
+            result = await process_pdf(pdf_file, invoice_parser) # Pass invoice_parser
             if result:
                 all_validated_data.append(result)
                 report_generator.generate_report(result)
