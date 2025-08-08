@@ -17,32 +17,28 @@ import unittest
 
 class TestTextExtractor(unittest.TestCase):
 
-    @patch('extractor.PyPDF2')
-    @patch("builtins.open", new_callable=mock_open, read_data="dummy data")
-    def test_extract_text_from_pdf_success(self, mock_file, mock_pypdf2):
-        mock_reader = MagicMock()
-        mock_page = MagicMock()
-        mock_page.extract_text.return_value = "Hello World"
-        mock_reader.pages = [mock_page]
-        mock_pypdf2.PdfReader.return_value = mock_reader
-
+    @patch('extractor.pymupdf_extract')
+    async def test_extract_text_from_pdf_success(self, mock_pymupdf_extract):
+        mock_pymupdf_extract.return_value = "Hello World"
         extractor = TextExtractor()
-        text = extractor.extract_text_from_pdf("dummy.pdf")
+        text = await extractor.extract_text("dummy.pdf")
         self.assertEqual(text, "Hello World")
 
-    @patch('extractor.convert_from_path')
-    @patch('extractor.pytesseract')
-    @patch('extractor.FileSystemUtils.preprocess_image') # Mock preprocess_image
-    @patch("builtins.open", new_callable=mock_open, read_data="dummy data")
-    def test_extract_text_from_pdf_ocr_success(self, mock_file, mock_preprocess_image, mock_pytesseract, mock_convert_from_path):
-        with patch('extractor.PyPDF2.PdfReader') as mock_pdf_reader:
-            mock_pdf_reader.side_effect = PyPDF2.errors.PdfReadError("Invalid PDF")
-            mock_convert_from_path.return_value = [MagicMock()]
-            mock_pytesseract.image_to_string.return_value = "OCR Text"
-            mock_preprocess_image.return_value = MagicMock() # Ensure preprocess_image returns a mock object
+    @patch('extractor.ollama')
+    @patch('extractor.PDFToJPGConverter')
+    @patch('extractor.pymupdf_extract', side_effect=Exception("PyMuPDF failed"))
+    async def test_extract_text_from_pdf_ocr_success(self, mock_pymupdf_extract, mock_pdf_to_jpg_converter, mock_ollama):
+        mock_instance = MagicMock()
+        mock_instance.convert_pdf.return_value = ["dummy_image.jpg"]
+        mock_pdf_to_jpg_converter.return_value = mock_instance
 
+        mock_ollama.chat.return_value = {'message': {'content': 'OCR Text'}}
+
+        with patch('builtins.open', new_callable=mock_open, read_data="dummy image data"), \
+             patch('os.remove'), \
+             patch('shutil.rmtree'):
             extractor = TextExtractor(enable_ocr=True)
-            text = extractor.extract_text_from_pdf("dummy.pdf")
+            text = await extractor.extract_text("dummy.pdf")
             self.assertEqual(text, "OCR Text")
 
 class TestInvoiceParser(unittest.TestCase):

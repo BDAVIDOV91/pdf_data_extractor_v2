@@ -4,6 +4,7 @@ import os
 import re
 from multiprocessing import Process, Queue
 from queue import Empty
+from io import BytesIO
 
 import httpx
 import PyPDF2
@@ -34,7 +35,37 @@ class TextExtractor:
             enable_ocr (bool): Whether to enable OCR for scanned PDFs.
         """
         self.enable_ocr = enable_ocr
+        self.ocr_preprocessing_enabled = settings.OCR_PREPROCESSING_ENABLED
         self.jigsaw_api_key = os.environ.get("JIGSAW_API_KEY")
+
+    def _deskew_image(self, image: Image.Image) -> Image.Image:
+        """Deskews an image using OpenCV."""
+        img_np = np.array(image)
+        gray = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY)
+        gray = cv2.bitwise_not(gray)
+        coords = np.column_stack(np.where(gray > 0))
+        angle = cv2.minAreaRect(coords)[-1]
+        if angle < -45:
+            angle = -(90 + angle)
+        else:
+            angle = -angle
+        (h, w) = img_np.shape[:2]
+        center = (w // 2, h // 2)
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+        rotated = cv2.warpAffine(gray, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+        return Image.fromarray(rotated)
+
+    def _binarize_image(self, image: Image.Image) -> Image.Image:
+        """Binarizes an image using OpenCV (Otsu's method)."""
+        img_np = np.array(image.convert('L'))  # Convert to grayscale
+        _, binarized = cv2.threshold(img_np, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        return Image.fromarray(binarized)
+
+    def _remove_noise(self, image: Image.Image) -> Image.Image:
+        """Removes noise from an image using OpenCV (fastNlMeansDenoising)."""
+        img_np = np.array(image)
+        denoised = cv2.fastNlMeansDenoisingColored(img_np, None, 10, 10, 7, 21)
+        return Image.fromarray(denoised)
 
 
     async def _extract_text_with_llama_vision(self, pdf_path: str) -> str:
@@ -44,10 +75,21 @@ class TextExtractor:
         converted_files = converter.convert_pdf(pdf_path, output_path)
 
         final_response = ""
-        for file_path in converted_files:
+        for original_file_path in converted_files:
             try:
-                with open(file_path, "rb") as image_file:
-                    base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+                image = Image.open(original_file_path)
+                
+                # Apply pre-processing if enabled
+                if self.ocr_preprocessing_enabled:
+                    logging.info(f"Applying OCR pre-processing to {original_file_path}")
+                    image = self._deskew_image(image)
+                    image = self._binarize_image(image)
+                    image = self._remove_noise(image)
+                
+                # Convert processed image back to base64
+                with BytesIO() as buffer:
+                    image.save(buffer, format="PNG")
+                    base64_image = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
                 response = ollama.chat(
                     model='x/llama3.2-vision:11b',
@@ -63,10 +105,10 @@ class TextExtractor:
                 )
                 final_response += response['message']['content'] + "\n"
             except Exception as e:
-                logging.error(f"Error processing image {file_path} with Llama Vision: {e}")
+                logging.error(f"Error processing image {original_file_path} with Llama Vision: {e}")
             finally:
-                if os.path.exists(file_path):
-                    os.remove(file_path)  # Clean up temporary image file
+                if os.path.exists(original_file_path):
+                    os.remove(original_file_path)  # Clean up temporary image file
         if os.path.exists(output_path):
             shutil.rmtree(output_path)  # Clean up temporary directory
         return final_response
@@ -149,32 +191,48 @@ class InvoiceParser:
             return None
 
     def get_document_type(self, text: str) -> str:
-        """Determines the document type by scoring pattern matches."""
-        scores = {}
-        for doc_type, patterns in self.patterns.items():
-            if doc_type == 'document': continue  # Skip generic document for scoring
-            
-            score = 0
+        """Determines the document type by scoring pattern matches, prioritizing specific types."""
+        best_match = "document"  # Default fallback
+        max_score = 0
+
+        # Define a prioritized order for document types
+        prioritized_doc_types = [
+            "ikea_receipt",  # Most specific
+            "receipt",
+            "patent_and_trademark_institute",
+            "vukov_development_services",
+            "etkyusi_eood",
+            "replit",
+            "atqc_ltd",
+            "document"  # Least specific, handled as fallback
+        ]
+
+        for doc_type in prioritized_doc_types:
+            if doc_type not in self.patterns or doc_type == "document":
+                continue
+
+            patterns = self.patterns[doc_type]
+            current_score = 0
+
             # Score based on keyword matches
             if "keywords" in patterns:
                 for keyword in patterns["keywords"]:
                     if re.search(keyword, text, re.IGNORECASE):
-                        score += 1
-            
-            # Score based on other pattern matches (invoice_number, date, etc.)
+                        current_score += 1  # Each keyword match adds 1 point
+
+            # Score based on specific field matches (higher weight)
             for field, pattern in patterns.items():
                 if field not in ["keywords", "document_type", "line_items", "line_items_block"]:
                     if re.search(pattern, text, re.IGNORECASE | re.DOTALL | re.UNICODE):
-                        score += 2  # Higher weight for specific field matches
+                        current_score += 2  # Each field pattern match adds 2 points
 
-            if score > 0:
-                scores[doc_type] = score
+            logging.debug(f"Document type: {doc_type}, Score: {current_score}")
 
-        if not scores:
-            return "document"  # Fallback to generic
+            if current_score > max_score:
+                max_score = current_score
+                best_match = doc_type
 
-        # Return the document type with the highest score
-        best_match = max(scores, key=scores.get)
+        logging.info(f"Identified document type as: {best_match} with score {max_score}")
         return best_match
 
     def parse_line_items(self, text: str, doc_type: str) -> list:
@@ -202,7 +260,7 @@ class InvoiceParser:
         if line_items_block_pattern:
             block_match = re.search(line_items_block_pattern, text, re.IGNORECASE | re.DOTALL | re.UNICODE)
             if block_match:
-                text_block = block_match.group(1)
+                text_block = block_match.group(0)
                 logging.info(f"Found line items block for {doc_type}.")
             else:
                 logging.warning(f"Line items block not found for {doc_type}.")

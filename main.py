@@ -150,4 +150,3 @@ async def amain(watch: bool, db: bool, max_workers: int | None) -> None:
 
 if __name__ == "__main__":
     cli()
-    cli()

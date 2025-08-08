@@ -14,13 +14,12 @@ class Settings(BaseSettings):
     )
     log_file: Path = Field("logs/extraction.log", description="Path to the log file.")
     enable_ocr: bool = Field(True, description="Enable OCR for scanned PDFs.")
+    OCR_PREPROCESSING_ENABLED: bool = Field(True, description="Enable image pre-processing for OCR.")
     tesseract_cmd: str = Field(
         "/usr/bin/tesseract", description="Path to the Tesseract executable."
     )
     database_url: str = Field(..., description="URL for the PostgreSQL database.")
-    pdf_tools_mcp_url: str = Field(
-        "http://localhost:8000", description="URL for the PDF Tools MCP server."
-    )
+    
 
     class Config:
         env_file = ".env"
