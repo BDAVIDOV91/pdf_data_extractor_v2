@@ -1,7 +1,7 @@
 __pycache__/
 .pytest_cache/
 venv/
-logs/
+
 output_reports/
 test_output/
 invoices.db
@@ -15,3 +15,5 @@ pdf-tools-mcp/**
 parsemypdfs/**
 mcp-sequentialthinking-tools/**
 utils/
+logs/
+mcp_servers_logs/

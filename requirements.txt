@@ -52,3 +52,7 @@ requests>=2.32.3
 torch>=2.6.0
 torchvision>=0.21.0
 docling
+
+# Testing
+pytest
+pytest-asyncio
