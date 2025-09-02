@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     database_url: str = Field(..., description="URL for the PostgreSQL database.")
     jigsaw_api_key: str = Field(..., alias="JIGSAW_API_KEY", description="API key for JigsawStack.")
 
+    llama_cloud_api_key: str = Field(..., alias="LLAMA_CLOUD_API_KEY", description="API key for Llama Cloud.")
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

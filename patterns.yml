@@ -15,26 +15,26 @@ patent_and_trademark_institute:
   line_items_block: |
     (?i)(?:Description|Item|Product|Service|Наименование на стоката/услугата|Артикул|КОД|ОПИСАНИЕ|Услуга)[\s\S]+?(?:Subtotal|Total|VAT|ДДС|ОБЩО|CYMA|Данъчна основа|Tax Base|Междинна сума|ОБЩА СУМА|Сума|ВСИЧКО|Стойност|Total Amount|Общо|Междинна сума)
   line_items: |
-    (?P<description>.+?)\s+((?:[\d.,]+\s*)+)$
+    (?P<description>.+?)\s+(?P<numbers>(?:[\d.,]+\s*)+)
 
 vukov_development_services:
   document_type: vukov_invoice
   keywords:
     - "Вуков Дивелъпмънт Сървисис"
     - "Vukov Development Services"
-  invoice_number: '([0-9]+)\s*Invoice No:'
+  invoice_number: 'Invoice No:[\s\r\n]*([0-9]+)'
   date: |
-    (?:Дата|Date):[\s]*([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4}|[\d]{4}-[\d]{2}-[\d]{2})
+    (?:Дата|Date):[\s\r\n]*([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4}|[\d]{4}-[\d]{2}-[\d]{2})
   total: |
     (?:Сума за плащане|Total):[\s]*([\d.,]+)
   vat: |
     ДДС:[\s]*([\d.,]+)
   client: |
-    Получател\s*([^\n]+)
+    Получател[\s]*([^\n]+)
   line_items_block: |
     (?i)(?:Description|Item|Product|Service|Наименование на стоката/услугата|Артикул|КОД|ОПИСАНИЕ|Услуга)[\s\S]+?(?:Subtotal|Total|VAT|ДДС|ОБЩО|CYMA|Данъчна основа|Tax Base|Междинна сума|ОБЩА СУМА|Сума|ВСИЧКО|Стойност|Total Amount|Общо|Междинна сума)
   line_items: |
-    (?P<description>.+?)\s+((?:[\d.,]+\s*)+)$
+    (?P<description>.+?)\s+(?P<numbers>(?:[\d.,]+\s*)+)
 
 etkyusi_eood:
   document_type: etkyusi_invoice
@@ -49,11 +49,11 @@ etkyusi_eood:
   vat: |
     Начислен ДДС(?:\d+%?)?[ :\s]*([\d.,]+)
   client: |
-    (?:Получател|Recipient|Client|Customer|Buyer|Купувач|Клиент)[: ]*(?:Име на фирма|Company Name)?:\s*([\s\S]+?)(?:\n|Id.No|ЕИК|ДДС No|$)
+    (?:Получател|Recipient|Client|Customer|Buyer|Купувач|Клиент)[: ]*(?:Име на фирма|Company Name)?:[\s\S]+?)(?:\n|Id.No|ЕИК|ДДС No|$)
   line_items_block: |
     (?i)(?:Description|Item|Product|Service|Наименование на стоката/услугата|Артикул|КОД|ОПИСАНИЕ|Услуга)[\s\S]+?(?:Subtotal|Total|VAT|ДДС|ОБЩО|CYMA|Данъчна основа|Tax Base|Междинна сума|ОБЩА СУМА|Сума|ВСИЧКО|Стойност|Total Amount|Общо|Междинна сума)
   line_items: |
-    (?P<description>.+?)\s+((?:[\d.,]+\s*)+)$
+    (?P<description>.+?)\s+(?P<numbers>(?:[\d.,]+\s*)+)
 
 receipt:
   document_type: receipt
@@ -70,7 +70,7 @@ receipt:
   vat: |
     (?i)(?:VAT|ДДС|Tax)[:\s]*([\d.,]+)
   date: |
-    (?i)(?:Date|Дата|Dato|Date of Issue|Trans Date|Sale Date)[:\s]*([\d]{1,2}[./-]\d{1,2}[./-]\d{2,4}|[\d]{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+[\d]{2,4}|[\d]{4}-[\d]{2}-[\d]{2})
+    (?i)(?:Date|Дата|Dato|Date of Issue|Trans Date|Sale Date)[:\s]*([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4}|[\d]{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+[\d]{2,4}|[\d]{4}-[\d]{2}-[\d]{2})
   transaction_id: |
     (?i)(?:Transaction ID|Trn ID|Ref No|Номер на транзакция)[:\s]*([A-Z0-9]+)
   payment_method: |
@@ -78,7 +78,7 @@ receipt:
   line_items_block: |
     (?i)(?:Description|Item|Product|Наименование|Стока)[\s\S]+?(?:Total|Sum|Сума|Subtotal|VAT|ДДС|ОБЩО|CYMA)
   line_items: |
-    (?P<description>.+?)\s+((?:[\d.,]+\s*)+)$
+    (?P<description>.+?)\s+(?P<numbers>(?:[\d.,]+\s*)+)
 
 document:
   document_type: generic_document
@@ -104,7 +104,7 @@ document:
   line_items_block: |
     (?i)(?:Description|Item|Product|Service|Наименование на стоката/услугата|Артикул|КОД|ОПИСАНИЕ|Услуга)[\s\S]+?(?:Subtotal|Total|VAT|ДДС|ОБЩО|CYMA|Данъчна основа|Tax Base|Междинна сума|ОБЩА СУМА|Сума|ВСИЧКО|Стойност|Total Amount|Общо|Междинна сума)
   line_items: |
-    (?P<description>.+?)\s+((?:[\d.,]+\s*)+)$
+    (?P<description>.+?)\s+(?P<numbers>(?:[\d.,]+\s*)+)
 
 ikea_receipt:
   document_type: ikea_receipt
@@ -120,8 +120,8 @@ ikea_receipt:
   total: |
     Сума\s*([\d.,]+)\s*BGN
   vat: |
-    ДДС ГРУПА Б-20,00%
+    ДДС ГРУПА Б-20,00% 
   line_items_block: |
     (?i)(?:Description|Item|Product|Service|Наименование на стоката/услугата|Артикул|КОД|ОПИСАНИЕ|Услуга)[\s\S]+?(?:Subtotal|Total|VAT|ДДС|ОБЩО|CYMA|Данъчна основа|Tax Base|Междинна сума|ОБЩА СУМА|Сума|ВСИЧКО|Стойност|Total Amount|Общо|Междинна сума)
   line_items: |
-    (?P<description>.+?)\s+((?:[\d.,]+\s*)+)$
+    (?P<description>.+?)\s+(?P<numbers>(?:[\d.,]+\s*)+)

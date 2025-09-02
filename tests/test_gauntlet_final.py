@@ -3,13 +3,13 @@ import pytest
 import asyncio
 import logging
 from pathlib import Path
-import json # Added import for json
+import json
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from extractor import extract_invoice_data
 from exceptions import InvoiceParsingError
-from unittest.mock import patch
 
 # Define the root of the project to build absolute paths
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -60,7 +60,7 @@ async def test_scanned_pdf_triggers_smart_lane(mock_qa_class, mock_text_extracto
         "150.00", # total
         "Mock Client Inc.", # client
         "20.00", # vat
-        "Description;Amount\nDescription 1;100.00\nDescription 2;50.00" # line_items
+        "Description;Amount\\nDescription 1;100.00\\nDescription 2;50.00" # line_items
     ]
 
     # This file is a scanned receipt that should fail the Fast Lane
@@ -82,7 +82,7 @@ async def test_scanned_pdf_triggers_smart_lane(mock_qa_class, mock_text_extracto
     assert len(data["line_items"]) == 2
     assert data["line_items"][0]['description'] == "Description 1"
     assert data["line_items'][0]['amount'] == "100.00"
-    assert data["line_items"][1]['description'] == "Description 2"
+    assert data["line_items'][1]['description'] == "Description 2"
     assert data["line_items'][1]['amount'] == "50.00"
 
 @pytest.mark.asyncio
@@ -185,5 +185,5 @@ async def test_gemini_smart_lane_fallback_success(mock_genai, mock_text_extracto
     assert len(data["line_items"]) == 2
     assert data["line_items"][0]['description'] == "Gemini Item 1"
     assert data["line_items'][0]['amount'] == "500.00"
-    assert data["line_items"][1]['description'] == "Gemini Item 2"
+    assert data["line_items'][1]['description'] == "Gemini Item 2"
     assert data["line_items'][1]['amount'] == "499.99"

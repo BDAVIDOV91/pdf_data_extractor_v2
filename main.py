@@ -1,15 +1,13 @@
 import asyncio
 import logging
 import os
-import threading
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from logging.handlers import RotatingFileHandler
 
 import click
 
 from config import settings
 from database import DatabaseManager
-from extractor import extract_invoice_data, InvoiceParser
+from extractor import extract_invoice_data
 from report_generator import ReportGenerator
 from utils import FileSystemUtils
 from validator import Validator
@@ -42,13 +40,11 @@ def setup_logging() -> None:
     logger.addHandler(console_handler)
 
 
-async def process_pdf(pdf_path: str, invoice_parser: InvoiceParser) -> dict | None:
+async def process_pdf(pdf_path: str) -> dict | None:
     """Processes a single PDF file."""
     try:
         logging.info(f"Processing {os.path.basename(pdf_path)}...")
-        extracted_data = await extract_invoice_data(
-            pdf_path, enable_ocr=settings.enable_ocr, invoice_parser=invoice_parser
-        )
+        extracted_data = await extract_invoice_data(pdf_path)
         if extracted_data:
             validator = Validator()
             validated_data = validator.validate_and_normalize_data(extracted_data)
@@ -92,7 +88,6 @@ async def amain(watch: bool, db: bool, max_workers: int | None) -> None:
     output_dir = settings.output_dir
     report_generator = ReportGenerator(output_dir)
     db_manager = None
-    invoice_parser = InvoiceParser() # Instantiate InvoiceParser once
 
     if db:
         db_manager = DatabaseManager(settings.database_url)
@@ -108,27 +103,21 @@ async def amain(watch: bool, db: bool, max_workers: int | None) -> None:
             )
             return
 
-        pdf_files = [
-            os.path.abspath(os.path.join(input_dir, f))
-            for f in os.listdir(input_dir)
-            if f.endswith(".pdf")
-        ]
-        processed_files = len(pdf_files)
+        target_pdf_file = os.path.abspath(os.path.join(input_dir, "Invoice 0000000023 Patent and Trademark Institute Ltd.pdf"))
 
         all_validated_data = []
         successful_extractions = 0
         failed_extractions = 0
 
-        for pdf_file in pdf_files:
-            result = await process_pdf(pdf_file, invoice_parser) # Pass invoice_parser
-            if result:
-                all_validated_data.append(result)
-                report_generator.generate_report(result)
-                if db_manager:
-                    db_manager.insert_invoice(result)
-                successful_extractions += 1
-            else:
-                failed_extractions += 1
+        result = await process_pdf(target_pdf_file)
+        if result:
+            all_validated_data.append(result)
+            report_generator.generate_report(result)
+            if db_manager:
+                db_manager.insert_invoice(result)
+            successful_extractions += 1
+        else:
+            failed_extractions += 1
 
         if all_validated_data:
             report_generator.export_to_csv_excel(all_validated_data)
@@ -138,7 +127,7 @@ async def amain(watch: bool, db: bool, max_workers: int | None) -> None:
             logging.info("No data to export.")
 
         logging.info("--- Summary ---")
-        logging.info(f"Total PDFs processed: {processed_files}")
+        logging.info(f"Total PDFs processed: 1")
         logging.info(f"Successful extractions: {successful_extractions}")
         logging.info(f"Failed extractions: {failed_extractions}")
         logging.info("-----------------")
