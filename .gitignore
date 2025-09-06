@@ -14,6 +14,6 @@ run_output.log
 pdf-tools-mcp/**
 parsemypdfs/**
 mcp-sequentialthinking-tools/**
-utils/
+
 logs/
 mcp_servers_logs/

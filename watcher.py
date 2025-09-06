@@ -37,7 +37,7 @@ class PDFHandler(FileSystemEventHandler):
             pdf_path (str): The path to the PDF file to process.
         """
         try:
-            extracted_data = extract_invoice_data(pdf_path, enable_ocr=settings.enable_ocr)
+            extracted_data = extract_invoice_data(pdf_path)
             if extracted_data:
                 validated_data = self.validator.validate_and_normalize_data(extracted_data)
                 self.report_generator.generate_report(validated_data)

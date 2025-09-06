@@ -2,10 +2,11 @@ import logging
 import re
 import yaml
 import json
-from dateutil.parser import parse
-from docling.document_converter import DocumentConverter
+
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
-from docling.models.tesseract_ocr_model import TesseractOcrOptions
+from docling.models.easyocr_model import EasyOcrOptions
 from config import settings
 from exceptions import InvoiceParsingError
 from validator import Validator
@@ -33,25 +34,21 @@ class TextExtractor:
 
     def __init__(self):
         """Initializes the TextExtractor."""
-        # Configure Tesseract OCR options
-        # We can pass Tesseract-specific configurations here for preprocessing if available.
-        # For example, '--psm 1' for automatic page segmentation with OSD.
-        # Tesseract's image preprocessing is often handled internally or via external tools.
-        # For deskewing/noise reduction, Tesseract itself doesn't have direct flags like OpenCV.
-        # However, we can enable OCR and let docling/Tesseract handle it as best as possible.
-        tesseract_options = TesseractOcrOptions(
-            lang="eng",  # Assuming English invoices for now
-            # config="--psm 3" # Example: Page segmentation mode (optional)
+        # Configure EasyOCR options
+        easyocr_options = EasyOcrOptions(
+            lang=["en"],  # EasyOCR uses 'en' for English
         )
 
-        # Configure PDF pipeline options to enable OCR and use Tesseract
+        # Configure PDF pipeline options to enable OCR and use EasyOCR
         pipeline_options = PdfPipelineOptions(
             do_ocr=True,  # Enable OCR
-            ocr_options=tesseract_options,  # Specify the Tesseract OCR options
+            ocr_options=easyocr_options,  # Specify the EasyOCR options
         )
 
         self.converter = DocumentConverter(
-            pipeline_options=pipeline_options
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+            }
         )
 
     def extract_text(self, pdf_path: str) -> str:
@@ -168,7 +165,11 @@ def _extract_data_with_gemini(pdf_path: str) -> dict | None:
         
         # Attempt to parse the response as JSON
         try:
-            extracted_json = json.loads(response.text)
+            # Attempt to parse the response as JSON
+            json_string = response.text.strip()
+            if json_string.startswith("```json") and json_string.endswith("```"):
+                json_string = json_string[len("```json"):-len("```")].strip()
+            extracted_json = json.loads(json_string)
             logging.info(f"Gemini extraction successful for {pdf_path}.")
             return extracted_json
         except json.JSONDecodeError:
@@ -320,10 +321,9 @@ async def extract_invoice_data(pdf_path: str) -> dict:
     It first tries the "Fast Lane" (regex patterns) and falls back to the
     "Smart Lane" (AI/LLM) if the initial results are insufficient.
     """
+    validator_instance = Validator() # Instantiate Validator once
     text_extractor = TextExtractor()
     text = text_extractor.extract_text(pdf_path)
-    with open("extracted_text.txt", "w") as f:
-        f.write(text)
 
     if not text:
         logging.info(f"Docling failed to extract text from {pdf_path}. Attempting Gemini Smart Lane...")
@@ -331,7 +331,6 @@ async def extract_invoice_data(pdf_path: str) -> dict:
         if gemini_data:
             logging.info(f"Gemini Smart Lane successful for {pdf_path}.")
             # Validate and normalize Gemini's output to match expected structure
-            validator_instance = Validator()
             validated_gemini_data = validator_instance.validate_and_normalize_data({
                 "invoice_number": gemini_data.get("invoice_number"),
                 "date": gemini_data.get("date"),
@@ -351,7 +350,6 @@ async def extract_invoice_data(pdf_path: str) -> dict:
     if _is_data_sufficient(fast_lane_data):
         logging.info(f"'Fast Lane' extraction successful for {pdf_path}.")
         # Ensure all keys are present, even if None
-        validator_instance = Validator()
         final_data = {
             "invoice_number": fast_lane_data.get("invoice_number"),
             "date": validator_instance._normalize_date(fast_lane_data.get("date", "")),
@@ -372,7 +370,6 @@ async def extract_invoice_data(pdf_path: str) -> dict:
 
     # Extract Date
     date_raw = qa.answer_question(text, "What is the invoice date? Respond with only the date in YYYY-MM-DD format.")
-    validator_instance = Validator()
     date = validator_instance._normalize_date(date_raw)
 
     # Extract Total Amount

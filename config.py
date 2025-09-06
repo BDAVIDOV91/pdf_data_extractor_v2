@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -18,15 +18,14 @@ class Settings(BaseSettings):
     tesseract_cmd: str = Field(
         "/usr/bin/tesseract", description="Path to the Tesseract executable."
     )
-    database_url: str = Field(..., description="URL for the PostgreSQL database.")
-    jigsaw_api_key: str = Field(..., alias="JIGSAW_API_KEY", description="API key for JigsawStack.")
+    google_api_key: str = Field(..., alias="GOOGLE_API_KEY", description="API key for Google Gemini API.")
+    database_url: str | None = Field(None, description="URL for the PostgreSQL database.")
+    
 
-    llama_cloud_api_key: str = Field(..., alias="LLAMA_CLOUD_API_KEY", description="API key for Llama Cloud.")
+    llama_cloud_api_key: str | None = Field(None, alias="LLAMA_CLOUD_API_KEY", description="API key for Llama Cloud.")
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra='ignore')
 
 
 settings = Settings()
-settings.database_url = settings.database_url.strip('"\' ').strip()
+if settings.database_url: settings.database_url = settings.database_url.strip("\' ").strip()
