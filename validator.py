@@ -4,7 +4,8 @@ from datetime import datetime
 class Validator:
     """Handles validation and normalization of extracted invoice data."""
 
-    def validate_and_normalize_data(self, data: dict) -> dict:
+    @staticmethod
+    def validate_and_normalize_data(data: dict) -> dict:
         """Runs a series of validation and normalization checks on the data.
 
         Args:
@@ -27,7 +28,7 @@ class Validator:
 
         # Validate and normalize date
         if "date" in data and data["date"] != "Not found":
-            normalized_date = self._normalize_date(data["date"])
+            normalized_date = Validator._normalize_date(data["date"])
             if normalized_date:
                 data["date"] = normalized_date
             else:
@@ -48,7 +49,8 @@ class Validator:
             
         return validated_data
 
-    def _normalize_date(self, date_str: str) -> str | None:
+    @staticmethod
+    def _normalize_date(date_str: str) -> str | None:
         """Normalizes a date string from various formats to YYYY-MM-DD.
 
         Args:

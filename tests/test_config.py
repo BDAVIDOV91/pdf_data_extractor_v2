@@ -18,13 +18,18 @@ class TestConfig(unittest.TestCase):
         with open(".env", "w") as f:
             f.write("INPUT_DIR=my_input_dir\n")
             f.write("ENABLE_OCR=True\n")
+            f.write("OLLAMA_LLM_MODEL=test_ollama_model\n")
+            f.write("HUGGINGFACE_EMBEDDINGS_MODEL=test_hf_model\n")
         
         settings = Settings()
         self.assertEqual(settings.input_dir, Path("my_input_dir"))
         self.assertTrue(settings.enable_ocr)
+        self.assertEqual(settings.ollama_llm_model, "test_ollama_model")
+        self.assertEqual(settings.huggingface_embeddings_model, "test_hf_model")
 
         import os
         os.remove(".env")
 
 if __name__ == '__main__':
+    unittest.main() __name__ == '__main__':
     unittest.main()

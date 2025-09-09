@@ -31,6 +31,8 @@ langchain-unstructured>=0.1.6
 langchain_huggingface
 langchain_community>=0.3.19
 tiktoken>=0.9.0
+google-cloud-storage>=2.17.0
+google-cloud-vision>=3.7.2
 google-genai>=1.5.0
 mistralai>=1.5.1
 

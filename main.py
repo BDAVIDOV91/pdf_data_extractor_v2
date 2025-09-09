@@ -9,7 +9,7 @@ from config import settings
 from database import DatabaseManager
 from extractor import extract_invoice_data
 from report_generator import ReportGenerator
-from utils import FileSystemUtils
+from utils.filesystem import FileSystemUtils, get_pdf_files
 from validator import Validator
 from watcher import start_watcher
 
@@ -46,8 +46,7 @@ async def process_pdf(pdf_path: str) -> dict | None:
         logging.info(f"Processing {os.path.basename(pdf_path)}...")
         extracted_data = await extract_invoice_data(pdf_path)
         if extracted_data:
-            validator = Validator()
-            validated_data = validator.validate_and_normalize_data(extracted_data)
+            validated_data = Validator.validate_and_normalize_data(extracted_data)
             logging.info(f"Successfully processed {os.path.basename(pdf_path)}.")
             return validated_data
         else:
@@ -103,21 +102,39 @@ async def amain(watch: bool, db: bool, max_workers: int | None) -> None:
             )
             return
 
-        target_pdf_file = os.path.abspath(os.path.join(input_dir, "Invoice 0000000023 Patent and Trademark Institute Ltd.pdf"))
+        pdf_files = get_pdf_files(input_dir)[:5] # Process only the first 5 PDF files
+
+        if not pdf_files:
+            logging.info(f"No PDF files found in '{input_dir}'.")
+            return
 
         all_validated_data = []
         successful_extractions = 0
         failed_extractions = 0
 
-        result = await process_pdf(target_pdf_file)
-        if result:
-            all_validated_data.append(result)
-            report_generator.generate_report(result)
-            if db_manager:
-                db_manager.insert_invoice(result)
-            successful_extractions += 1
+        if max_workers and max_workers > 1:
+            logging.info(f"Processing {len(pdf_files)} PDFs with {max_workers} workers...")
+            # Use a semaphore to limit concurrent tasks
+            semaphore = asyncio.Semaphore(max_workers)
+
+            async def sem_process_pdf(pdf_path: str):
+                async with semaphore:
+                    return await process_pdf(pdf_path)
+
+            results = await asyncio.gather(*[sem_process_pdf(pdf_file) for pdf_file in pdf_files])
         else:
-            failed_extractions += 1
+            logging.info(f"Processing {len(pdf_files)} PDFs sequentially...")
+            results = [await process_pdf(pdf_file) for pdf_file in pdf_files]
+
+        for result in results:
+            if result:
+                all_validated_data.append(result)
+                report_generator.generate_report(result)
+                if db_manager:
+                    db_manager.insert_invoice(result)
+                successful_extractions += 1
+            else:
+                failed_extractions += 1
 
         if all_validated_data:
             report_generator.export_to_csv_excel(all_validated_data)
@@ -127,7 +144,7 @@ async def amain(watch: bool, db: bool, max_workers: int | None) -> None:
             logging.info("No data to export.")
 
         logging.info("--- Summary ---")
-        logging.info(f"Total PDFs processed: 1")
+        logging.info(f"Total PDFs processed: {len(pdf_files)}")
         logging.info(f"Successful extractions: {successful_extractions}")
         logging.info(f"Failed extractions: {failed_extractions}")
         logging.info("-----------------")

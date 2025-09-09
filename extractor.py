@@ -2,11 +2,8 @@ import logging
 import re
 import yaml
 import json
-
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
-from docling.models.easyocr_model import EasyOcrOptions
+import os
+from google.cloud import vision, storage
 from config import settings
 from exceptions import InvoiceParsingError
 from validator import Validator
@@ -28,43 +25,109 @@ except FileNotFoundError:
     logging.error("patterns.yml not found. The 'Fast Lane' extractor will not work.")
     PATTERNS = {}
 
+# --- Set Google Cloud Credentials ---
+# This line tells the Google Cloud library where to find the key file.
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials
+
+def _extract_text_with_vision_api(pdf_path: str) -> str:
+    """
+    Extracts text from a PDF using the Google Cloud Vision API.
+    This function now handles uploading the PDF to GCS as required by the API
+    for asynchronous processing.
+    """
+    try:
+        client = vision.ImageAnnotatorClient()
+        storage_client = storage.Client()
+        bucket = storage_client.get_bucket(settings.gcs_bucket_name)
+
+        # --- 1. Upload Source PDF to GCS ---
+        file_name = os.path.basename(pdf_path)
+        gcs_source_uri = f"gs://{settings.gcs_bucket_name}/uploads/{file_name}"
+        upload_blob = bucket.blob(f"uploads/{file_name}")
+
+        logging.info(f"Uploading {pdf_path} to {gcs_source_uri}...")
+        upload_blob.upload_from_filename(pdf_path)
+        logging.info("Upload complete.")
+
+        # --- 2. Call API with GCS Path ---
+        gcs_source = vision.GcsSource(uri=gcs_source_uri)
+        input_config = vision.InputConfig(
+            gcs_source=gcs_source, mime_type="application/pdf"
+        )
+
+        # Location to store the results
+        gcs_destination_uri = f"gs://{settings.gcs_bucket_name}/results/"
+        gcs_destination = vision.GcsDestination(uri=gcs_destination_uri)
+        output_config = vision.OutputConfig(gcs_destination=gcs_destination, batch_size=1)
+
+        feature = vision.Feature(type_=vision.Feature.Type.DOCUMENT_TEXT_DETECTION)
+
+        async_request = vision.AsyncAnnotateFileRequest(
+            features=[feature], input_config=input_config, output_config=output_config
+        )
+
+        operation = client.async_batch_annotate_files(requests=[async_request])
+        logging.info(f"Waiting for Google Vision API operation to complete for {pdf_path}...")
+        operation.result(timeout=420)
+        logging.info(f"Google Vision API operation completed for {pdf_path}.")
+
+        # --- 3. Retrieve Results ---
+        blob_list = list(bucket.list_blobs(prefix="results/"))
+        full_text = ""
+        result_blobs_to_delete = []
+
+        for blob in blob_list:
+            if ".json" in blob.name:
+                json_string = blob.download_as_string()
+                response = vision.AnnotateFileResponse.from_json(json_string)
+                for page_response in response.responses:
+                    full_text += page_response.full_text_annotation.text
+                result_blobs_to_delete.append(blob)
+
+        logging.info(f"Successfully extracted text for {pdf_path} from GCS.")
+
+        # --- 4. Cleanup ---
+        logging.info("Cleaning up GCS files...")
+        upload_blob.delete()
+        logging.info(f"Deleted uploaded file: {gcs_source_uri}")
+        for blob in result_blobs_to_delete:
+            blob.delete()
+            logging.info(f"Deleted result file: {blob.name}")
+        logging.info("Cleanup complete.")
+
+        return full_text
+
+    except Exception as e:
+        logging.error(f"Failed to extract text from {pdf_path} using Google Vision API: {e}")
+        # Ensure cleanup happens even on error if upload_blob was created
+        try:
+            if 'upload_blob' in locals() and upload_blob.exists():
+                upload_blob.delete()
+                logging.info(f"Cleaned up orphaned upload file: {gcs_source_uri}")
+        except Exception as cleanup_error:
+            logging.error(f"Error during cleanup: {cleanup_error}")
+        return ""
+
 
 class TextExtractor:
-    """Handles text extraction from PDF files, using docling."""
+    """Handles text extraction from PDF files, now using Google Vision API."""
 
     def __init__(self):
         """Initializes the TextExtractor."""
-        # Configure EasyOCR options
-        easyocr_options = EasyOcrOptions(
-            lang=["en"],  # EasyOCR uses 'en' for English
-        )
-
-        # Configure PDF pipeline options to enable OCR and use EasyOCR
-        pipeline_options = PdfPipelineOptions(
-            do_ocr=True,  # Enable OCR
-            ocr_options=easyocr_options,  # Specify the EasyOCR options
-        )
-
-        self.converter = DocumentConverter(
-            format_options={
-                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
-            }
-        )
+        # The converter is no longer the primary method for OCR,
+        # but could be kept for other purposes if needed.
+        pass
 
     def extract_text(self, pdf_path: str) -> str:
-        """Extracts text from a PDF using docling."""
-        try:
-            result = self.converter.convert(pdf_path)
-            return result.document.export_to_markdown()
-        except Exception as e:
-            logging.error(f"Failed to extract text from {pdf_path} using docling: {e}")
-            return ""
+        """Extracts text from a PDF using the Google Vision API."""
+        logging.info(f"Extracting text from {pdf_path} using Google Vision API...")
+        return _extract_text_with_vision_api(pdf_path)
 
 
 class QuestionAnswering:
     """Handles question answering using a RAG architecture (The "Smart Lane")."""
 
-    def __init__(self):
+    def __init__(self, ollama_llm_model: str, huggingface_embeddings_model: str):
         """Initializes the QuestionAnswering class."""
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=2000,
@@ -72,9 +135,9 @@ class QuestionAnswering:
             is_separator_regex=False
         )
         self.embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L12-v2"
+            model_name=huggingface_embeddings_model
         )
-        self.llm = OllamaLLM(model="qwen:1.8b")
+        self.llm = OllamaLLM(model=ollama_llm_model)
 
     def create_vector_store(self, texts: list[str]) -> FAISS:
         """Create and initialize FAISS vector store using text embeddings"""
@@ -199,6 +262,21 @@ def _parse_vat(text: str) -> str:
     match = re.search(r'[\d,.]+', text)
     return match.group(0).replace(',', '').strip() if match else "N/A"
 
+
+def _sanitize_amount(amount_str: str) -> float | None:
+    """Sanitizes a string to extract a float amount."""
+    if not amount_str:
+        return None
+    # Remove all characters except digits and decimal point/comma
+    sanitized = re.sub(r'[^\d.,]', '', amount_str)
+    # Replace comma with decimal point
+    sanitized = sanitized.replace(',', '.')
+    try:
+        return float(sanitized)
+    except (ValueError, TypeError):
+        return None
+
+
 def _parse_line_items_from_text(text: str) -> list[dict]:
     """Parses line items from a simple text response, robust to inconsistent LLM output."""
     line_items = []
@@ -249,6 +327,13 @@ def _parse_line_items_from_text(text: str) -> list[dict]:
         logging.warning("Could not determine headers for line items.")
         return []
 
+    # Identify the amount column
+    amount_column_index = -1
+    for i, header in enumerate(headers):
+        if any(keyword in header for keyword in ["amount", "total", "price"]):
+            amount_column_index = i
+            break
+
     for line in data_lines:
         line = line.strip()
         if not line:
@@ -268,7 +353,26 @@ def _parse_line_items_from_text(text: str) -> list[dict]:
         item_data = {}
         for i, header in enumerate(headers):
             if i < len(values):
-                item_data[header] = values[i]
+                value = values[i]
+                if i == amount_column_index:
+                    item_data['amount'] = _sanitize_amount(value)
+                else:
+                    item_data[header] = value
+        
+        # Ensure there is a description and amount
+        if 'amount' not in item_data:
+            item_data['amount'] = None
+
+        if 'description' not in item_data:
+            # find the first column that is not the amount and use it as description
+            for i, header in enumerate(headers):
+                if i != amount_column_index:
+                    item_data['description'] = values[i]
+                    break
+            if 'description' not in item_data:
+                 item_data['description'] = "N/A"
+
+
         line_items.append(item_data)
     
     return line_items
@@ -321,27 +425,32 @@ async def extract_invoice_data(pdf_path: str) -> dict:
     It first tries the "Fast Lane" (regex patterns) and falls back to the
     "Smart Lane" (AI/LLM) if the initial results are insufficient.
     """
-    validator_instance = Validator() # Instantiate Validator once
+    
     text_extractor = TextExtractor()
     text = text_extractor.extract_text(pdf_path)
 
     if not text:
         logging.info(f"Docling failed to extract text from {pdf_path}. Attempting Gemini Smart Lane...")
-        gemini_data = _extract_data_with_gemini(pdf_path)
-        if gemini_data:
-            logging.info(f"Gemini Smart Lane successful for {pdf_path}.")
-            # Validate and normalize Gemini's output to match expected structure
-            validated_gemini_data = validator_instance.validate_and_normalize_data({
-                "invoice_number": gemini_data.get("invoice_number"),
-                "date": gemini_data.get("date"),
-                "total": gemini_data.get("total"),
-                "client": gemini_data.get("client"),
-                "vat": gemini_data.get("vat"),
-                "line_items": gemini_data.get("line_items", [])
-            })
-            return validated_gemini_data['data'] # Return only the data part
+        if settings.smart_lane_enabled:
+            gemini_data = _extract_data_with_gemini(pdf_path)
+            if gemini_data:
+                logging.info(f"Gemini Smart Lane successful for {pdf_path}.")
+                # Validate and normalize Gemini's output to match expected structure
+                validated_gemini_data = Validator.validate_and_normalize_data({
+                    "invoice_number": gemini_data.get("invoice_number"),
+                    "date": gemini_data.get("date"),
+                    "total": gemini_data.get("total"),
+                    "client": gemini_data.get("client"),
+                    "vat": gemini_data.get("vat"),
+                    "line_items": gemini_data.get("line_items", [])
+                })
+                return validated_gemini_data['data'] # Return only the data part
+            else:
+                raise InvoiceParsingError("Could not extract any text from the PDF using Docling or Gemini.")
         else:
-            raise InvoiceParsingError("Could not extract any text from the PDF using Docling or Gemini.")
+            logging.info(f"Smart Lane is disabled. Skipping Gemini extraction for {pdf_path}.")
+            raise InvoiceParsingError("Could not extract any text from the PDF using Docling, and Smart Lane is disabled.")
+
 
     # --- Pathway 1: The "Fast Lane" ---
     logging.info(f"Attempting 'Fast Lane' extraction for {pdf_path}...")
@@ -352,7 +461,7 @@ async def extract_invoice_data(pdf_path: str) -> dict:
         # Ensure all keys are present, even if None
         final_data = {
             "invoice_number": fast_lane_data.get("invoice_number"),
-            "date": validator_instance._normalize_date(fast_lane_data.get("date", "")),
+            "date": Validator._normalize_date(fast_lane_data.get("date", "")),
             "total": fast_lane_data.get("total"),
             "client": fast_lane_data.get("client"),
             "vat": fast_lane_data.get("vat"),
@@ -361,42 +470,45 @@ async def extract_invoice_data(pdf_path: str) -> dict:
         return final_data
 
     # --- Pathway 2: The "Smart Lane" (Fallback) ---
-    logging.info(f"'Fast Lane' failed or data insufficient. Switching to 'Smart Lane' for {pdf_path}.")
-    qa = QuestionAnswering()
+    if settings.smart_lane_enabled:
+        logging.info(f"'Fast Lane' failed or data insufficient. Switching to 'Smart Lane' for {pdf_path}.")
+        qa = QuestionAnswering(settings.ollama_llm_model, settings.huggingface_embeddings_model)
 
-    # Extract Invoice Number
-    invoice_number_raw = qa.answer_question(text, "What is the invoice number? Respond with only the number.")
-    invoice_number = _parse_invoice_number(invoice_number_raw)
+        # Extract Invoice Number
+        invoice_number_raw = qa.answer_question(text, "What is the invoice number? Respond with only the number.")
+        invoice_number = _parse_invoice_number(invoice_number_raw)
 
-    # Extract Date
-    date_raw = qa.answer_question(text, "What is the invoice date? Respond with only the date in YYYY-MM-DD format.")
-    date = validator_instance._normalize_date(date_raw)
+        # Extract Date
+        date_raw = qa.answer_question(text, "What is the invoice date? Respond with only the date in YYYY-MM-DD format.")
+        date = Validator._normalize_date(date_raw)
 
-    # Extract Total Amount
-    total_raw = qa.answer_question(text, "What is the total amount of the invoice? Respond with only the number.")
-    total = _parse_total(total_raw)
+        # Extract Total Amount
+        total_raw = qa.answer_question(text, "What is the total amount of the invoice? Respond with only the number.")
+        total = _parse_total(total_raw)
 
-    # Extract Client Name
-    client_raw = qa.answer_question(text, "What is the client name on the invoice? Respond with only the client name.")
-    client = _parse_client(client_raw)
+        # Extract Client Name
+        client_raw = qa.answer_question(text, "What is the client name on the invoice? Respond with only the client name.")
+        client = _parse_client(client_raw)
 
-    # Extract VAT
-    vat_raw = qa.answer_question(text, "What is the VAT amount on the invoice? Respond with only the number.")
-    vat = _parse_vat(vat_raw)
-    
-    # Extract Line Items (Complex task, remains in Smart Lane)
-    question_line_items = "For each line item, provide the description, quantity, unit price, and total price, separated by semicolons. Each line item on a new line. Do NOT include any other text, explanations, or conversational elements. Only provide the semicolon-separated data."
-    line_items_raw = qa.answer_question(text, question_line_items)
-    line_items = _parse_line_items_from_text(line_items_raw)
+        # Extract VAT
+        vat_raw = qa.answer_question(text, "What is the VAT amount on the invoice? Respond with only the number.")
+        vat = _parse_vat(vat_raw)
 
+        # Extract Line Items
+        question_line_items = "For each line item, provide the description, quantity, unit price, and total price, separated by semicolons. Each line item on a new line. Do NOT include any other text, explanations, or conversational elements. Only provide the semicolon-separated data."
+        line_items_raw = qa.answer_question(text, question_line_items)
+        line_items = _parse_line_items_from_text(line_items_raw)
 
-    smart_lane_data = {
-        "invoice_number": invoice_number,
-        "date": date,
-        "total": total,
-        "client": client,
-        "line_items": line_items,
-        "vat": vat,
-    }
+        smart_lane_data = {
+            "invoice_number": invoice_number,
+            "date": date,
+            "total": total,
+            "client": client,
+            "line_items": line_items,
+            "vat": vat,
+        }
 
-    return smart_lane_data
+        return smart_lane_data
+    else:
+        logging.info(f"Smart Lane is disabled. Skipping Smart Lane extraction for {pdf_path}.")
+        raise InvoiceParsingError("Fast Lane failed or data insufficient, and Smart Lane is disabled.")

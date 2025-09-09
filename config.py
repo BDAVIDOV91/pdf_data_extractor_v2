@@ -19,13 +19,18 @@ class Settings(BaseSettings):
         "/usr/bin/tesseract", description="Path to the Tesseract executable."
     )
     google_api_key: str = Field(..., alias="GOOGLE_API_KEY", description="API key for Google Gemini API.")
+    google_application_credentials: str = Field("heroic-psyche-469503-g5-96f79b5cc7fe.json", description="Path to Google Cloud credentials file.")
+    gcs_bucket_name: str = Field("pdf-extractor-results-heroic-psyche-469503-g5", description="Google Cloud Storage bucket for Vision API results.")
     database_url: str | None = Field(None, description="URL for the PostgreSQL database.")
     
 
     llama_cloud_api_key: str | None = Field(None, alias="LLAMA_CLOUD_API_KEY", description="API key for Llama Cloud.")
+    ollama_llm_model: str = Field("qwen:1.8b", description="Ollama LLM model to use for Smart Lane.")
+    huggingface_embeddings_model: str = Field("sentence-transformers/all-MiniLM-L12-v2", description="HuggingFace embeddings model for Smart Lane.")
+    smart_lane_enabled: bool = Field(True, description="Enable or disable the Smart Lane (AI/LLM-based extraction).")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra='ignore')
 
 
 settings = Settings()
-if settings.database_url: settings.database_url = settings.database_url.strip("\' ").strip()
+if settings.database_url: settings.database_url = settings.database_url.strip("' ").strip()

@@ -155,3 +155,14 @@ class FileSystemUtils:
         processed_image = Image.fromarray(denoised)
         
         return processed_image
+
+def get_pdf_files(directory: str) -> list:
+    """Retrieves a list of all PDF files in a given directory.
+
+    Args:
+        directory (str): The path to the directory.
+
+    Returns:
+        list: A list of absolute paths to the PDF files.
+    """
+    return FileSystemUtils.get_all_files_in_directory(directory, extension=".pdf")
