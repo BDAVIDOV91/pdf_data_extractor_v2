@@ -123,7 +123,7 @@ async def amain(watch: bool, db: bool, max_workers: int | None) -> None:
             )
             return
 
-        pdf_files = get_pdf_files(input_dir)[:5]  # Process only the first 5 PDF files
+        pdf_files = get_pdf_files(input_dir)[:10] # Process only the first 10 PDF files
 
         if not pdf_files:
             logging.info(f"No PDF files found in '{input_dir}'.")

@@ -121,23 +121,39 @@ def _extract_data_with_gemini(pdf_path: str) -> dict | None:
             pdf_bytes = file.read()
 
         # Prompt for Gemini to extract structured invoice data
-        prompt = """Extract the following fields from the document:
-        Invoice Number, Date (YYYY-MM-DD), Total Amount, Client Name, VAT Amount.
-        If line items are present, extract them with Description and Amount.
-        Provide the output as a JSON object.
-        Example:
-        {
-            "invoice_number": "INV-2023-001",
-            "date": "2023-01-15",
-            "total": "150.00",
-            "client": "ABC Corp",
-            "vat": "20.00",
-            "line_items": [
-                {"description": "Item 1", "amount": "100.00"},
-                {"description": "Item 2", "amount": "50.00"}
-            ]
-        }
-        If a field is not found, use "N/A" for string fields and "0.00" for numeric fields.
+        prompt = """You are an expert accountant tasked with extracting data from invoices.
+Analyze the document and extract the following fields:
+- invoice_number: The unique identifier for the invoice.
+- date: The issue date of the invoice, formatted as YYYY-MM-DD.
+- total: The total amount of the invoice.
+- client: The name of the client or customer.
+- vat: The total VAT amount, if present.
+
+Additionally, extract all line items from the invoice.
+For each line item, provide:
+- description: The description of the item or service.
+- amount: The total price for the line item.
+
+Your output MUST be a single, valid JSON object. Do not include any other text, explanations, or conversational elements.
+
+The JSON structure should be as follows:
+{
+  "invoice_number": "string | N/A",
+  "date": "string (YYYY-MM-DD) | N/A",
+  "total": "number | 0.00",
+  "client": "string | N/A",
+  "vat": "number | 0.00",
+  "line_items": [
+    {
+      "description": "string",
+      "amount": "number"
+    }
+  ]
+}
+
+If a top-level field is not found, use "N/A" for string fields and 0.00 for numeric fields.
+If no line items are found, provide an empty array `[]`.
+Do not guess or make up information. If a value is not clearly present, use the specified default values.
         """
         
         client = genai.Client(api_key=settings.google_api_key)
