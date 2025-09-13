@@ -24,9 +24,7 @@ class Settings(BaseSettings):
     database_url: str | None = Field(None, description="URL for the PostgreSQL database.")
     
 
-    llama_cloud_api_key: str | None = Field(None, alias="LLAMA_CLOUD_API_KEY", description="API key for Llama Cloud.")
-    ollama_llm_model: str = Field("qwen:1.8b", description="Ollama LLM model to use for Smart Lane.")
-    huggingface_embeddings_model: str = Field("sentence-transformers/all-MiniLM-L12-v2", description="HuggingFace embeddings model for Smart Lane.")
+    
     smart_lane_enabled: bool = Field(True, description="Enable or disable the Smart Lane (AI/LLM-based extraction).")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra='ignore')

@@ -60,6 +60,7 @@ class DatabaseManager:
                     amount REAL
                 );
             """)
+            self.conn.commit()
             logging.info("Database tables created or already exist.")
         except Error as e:
             logging.error(f"Table creation failed: {e}")
