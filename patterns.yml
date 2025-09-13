@@ -49,7 +49,7 @@ etkyusi_eood:
   vat: |
     Начислен ДДС(?:\d+%?)?[ :\s]*([\d.,]+)
   client: |
-    (?:Получател|Recipient|Client|Customer|Buyer|Купувач|Клиент)[: ]*(?:Име на фирма|Company Name)?:[\s\S]+?)(?:\n|Id.No|ЕИК|ДДС No|$)
+    (?:Получател|Recipient|Client|Customer|Buyer|Купувач|Клиент)[: ]*(?:Име на фирма|Company Name)?:([\s\S]+?)(?:\n|Id.No|ЕИК|ДДС No|$)
   line_items_block: |
     (?i)(?:Description|Item|Product|Service|Наименование на стоката/услугата|Артикул|КОД|ОПИСАНИЕ|Услуга)[\s\S]+?(?:Subtotal|Total|VAT|ДДС|ОБЩО|CYMA|Данъчна основа|Tax Base|Междинна сума|ОБЩА СУМА|Сума|ВСИЧКО|Стойност|Total Amount|Общо|Междинна сума)
   line_items: |
